@@ -19,13 +19,18 @@
 ### 怎么问
 
 - **对话问询（主入口，ObjectOS）**：员工在 ObjectOS 的 AI 对话面板里直接提问。
-  `src/skills/policy-inquiry.skill.ts` 给 `ask` 智能体加上「制度问询」技能：只依据提问人
-  有权查看的现行条款作答、注明《制度》版本 第 N 条，找不到依据时调用
-  `action_brightrule_escalate_question` 转人工。对话运行时只在 ObjectOS 中提供，本地开源版
-  无法演示对话。
+  `src/skills/policy-inquiry.skill.ts` 是「制度问询」技能：只依据提问人有权查看的现行条款
+  作答、注明《制度》版本 第 N 条，找不到依据时调用转人工动作 `brightrule_escalate_question`。
+  ⚠️ 截至 ObjectOS 18.6.0，平台的 `ask` 智能体还不加载应用技能（[objectstack-ai/cloud#4935](https://github.com/objectstack-ai/cloud/issues/4935)），
+  对话的回答来自 `ask` 自带的数据查询能力，技能里的规则尚未生效。
+- **MCP 问询（外部 AI 客户端）**：客户自带的大模型（Claude、DeepSeek 等）连 `/api/v1/mcp`，
+  平台把「制度问询」技能作为提示词 `brightrule-brightrule_policy_inquiry` 下发，已实测可用。
 - **表单问询（兜底）**：在「制度问询 → 我要问询」新建一条问题，保存即自动答复
   （`src/qa/question-answer.hook.ts`）。
-- **转人工**：对话中转人工的问题进入「待人工答复」，由归口部门答复。
+- **转人工**：对话或 MCP 中转人工的问题进入「待人工答复」，由归口部门答复。
+
+在 ObjectOS 企业版上部署见 [`deploy/objectos-ee`](deploy/objectos-ee/README.md)；
+三条问询路径的实测数据见 [`docs/evaluation-2026-11-23.md`](docs/evaluation-2026-11-23.md)。
 
 ### 问询检索方式（环境变量）
 

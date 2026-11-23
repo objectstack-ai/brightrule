@@ -1,5 +1,9 @@
 import * as UI from '@objectstack/spec/ui';
 import { Note } from '../objects/note.object.js';
+import { Policy } from '../objects/policy.object.js';
+import { PolicyVersion } from '../objects/policy-version.object.js';
+import { Clause } from '../objects/clause.object.js';
+import { Question } from '../objects/question.object.js';
 
 /**
  * Main App
@@ -20,6 +24,29 @@ const mainApp: UI.App = {
   name: 'brightrule_main_app',
   label: '明规',
   navigation: [
+    {
+      id: 'brightrule_inquiry_group',
+      type: 'group',
+      label: '制度问询',
+      icon: 'message-circle-question',
+      children: [
+        { id: 'brightrule_question_nav', type: 'object', objectName: Question.name, label: '我要问询', icon: 'message-circle-question' },
+        { id: 'brightrule_question_human_nav', type: 'object', objectName: Question.name, viewName: 'needs_human', label: '待人工答复', icon: 'user-round-check' },
+      ],
+    },
+    {
+      id: 'brightrule_maintain_group',
+      type: 'group',
+      label: '制度维护',
+      icon: 'book-open',
+      children: [
+        { id: 'brightrule_policy_library_nav', type: 'object', objectName: Policy.name, viewName: 'published', label: '制度库', icon: 'library' },
+        { id: 'brightrule_policy_nav', type: 'object', objectName: Policy.name, label: '全部制度', icon: 'book-open' },
+        { id: 'brightrule_policy_version_nav', type: 'object', objectName: PolicyVersion.name, label: '制度版本', icon: 'git-branch' },
+        { id: 'brightrule_clause_nav', type: 'object', objectName: Clause.name, label: '条款', icon: 'list-ordered' },
+        { id: 'brightrule_clause_current_nav', type: 'object', objectName: Clause.name, viewName: 'current', label: '现行条款', icon: 'circle-check' },
+      ],
+    },
     {
       id: `${Note.name}_nav`,
       type: 'object',

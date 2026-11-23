@@ -12,6 +12,8 @@ import * as skills from './src/skills';
 import * as picklists from './src/picklists';
 import * as permissions from './src/security';
 import * as datasets from './src/datasets';
+import { BrightRuleSeedData } from './src/data/seed';
+import { policyQaFunctions, policyQaHooks, policyQaPlugins } from './src/qa';
 
 // Every value a barrel exports, as the list a stack key takes: typed by what
 // the barrel exports, and an empty list while it exports nothing yet.
@@ -50,7 +52,9 @@ export default defineStack({
   // `objectstack generate flow NAME` writes: without it this config stops
   // loading once it holds such a flow. It can go if this project will never
   // hold one.
-  requires: ['automation', 'triggers'],
+  // `realtime` carries the record events the policy-inquiry index follows
+  // (src/qa): a clause written after boot is re-indexed from its event.
+  requires: ['automation', 'triggers', 'realtime'],
 
   // Generic connector executors, default-present so you can add a `connectors:`
   // entry naming `provider: 'rest' | 'openapi' | 'mcp'` and have it materialize
@@ -64,7 +68,14 @@ export default defineStack({
     new ConnectorRestPlugin(),
     new ConnectorOpenApiPlugin(),
     new ConnectorMcpPlugin(),
+    // 制度问询: knowledge service, retrieval engine and the clause index.
+    ...policyQaPlugins(),
   ],
+
+  // 制度问询 lifecycle hooks (src/qa) and the sample policies (src/data).
+  hooks: policyQaHooks,
+  functions: policyQaFunctions,
+  data: BrightRuleSeedData,
 
   // Every directory `objectstack generate` writes into is wired here: its
   // index.ts exports what the directory holds, and each list below hands

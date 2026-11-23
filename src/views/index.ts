@@ -4,3 +4,7 @@
 // and a view file this index does not export is never loaded.
 export {};
 export { default as note } from './note.view';
+export { default as policy } from './policy.view';
+export { default as policyVersion } from './policy-version.view';
+export { default as clause } from './clause.view';
+export { default as question } from './question.view';

@@ -1,0 +1,79 @@
+import { defineHook, type HookContext } from '@objectstack/spec/data';
+
+type Row = Record<string, unknown>;
+
+/**
+ * Keep the inquiry index on the current text — the maintenance half of policy
+ * inquiry. Marking a version `current` is the one act a maintainer performs;
+ * this hook carries its consequences:
+ *
+ *   1. every clause of the version becomes current (`is_current`), and every
+ *      clause of a version that is not current stops being so;
+ *   2. the policy's other current version is superseded (which runs this hook
+ *      for it in turn, retiring its clauses);
+ *   3. the policy records the new version as its `current_version`.
+ *
+ * Writes go row by row through `ctx.api`, never as one predicate update: each
+ * row write raises the record event the knowledge index follows, where a bulk
+ * write raises only a count.
+ */
+export const VersionCurrentHook = defineHook({
+  name: 'brightrule_policy_version_current',
+  object: 'brightrule_policy_version',
+  events: ['afterInsert', 'afterUpdate'],
+  handler: async (ctx: HookContext) => {
+    const api = ctx.api;
+    if (!api) return;
+    const input = ctx.input as { id?: unknown; data?: Row };
+    const id = String(input.id ?? input.data?.id ?? (ctx.result as Row | undefined)?.id ?? '');
+    if (!id) return;
+    const version = (await api.object('brightrule_policy_version').findOne({ where: { id } })) as Row | null;
+    if (!version) return;
+    const isCurrent = version.version_status === 'current';
+
+    const clauses = (await api.object('brightrule_clause').find({
+      where: { policy_version: id },
+      fields: ['id', 'is_current'],
+    })) as Row[];
+    for (const clause of clauses) {
+      if (Boolean(clause.is_current) !== isCurrent) {
+        await api.object('brightrule_clause').update({ id: clause.id, is_current: isCurrent });
+      }
+    }
+
+    if (!isCurrent || !version.policy) return;
+    const siblings = (await api.object('brightrule_policy_version').find({
+      where: { policy: version.policy, version_status: 'current' },
+      fields: ['id'],
+    })) as Row[];
+    for (const sibling of siblings) {
+      if (sibling.id !== id) {
+        await api.object('brightrule_policy_version').update({ id: sibling.id, version_status: 'superseded' });
+      }
+    }
+    await api.object('brightrule_policy').update({
+      id: version.policy,
+      current_version: version.version_no ?? null,
+      ...(version.effective_date ? { effective_date: version.effective_date } : {}),
+    });
+  },
+});
+
+/**
+ * A clause added to the current version is current from the moment it is
+ * saved, so a maintainer splitting a published policy into clauses never has
+ * to tick the flag by hand.
+ */
+export const ClauseCurrentHook = defineHook({
+  name: 'brightrule_clause_current',
+  object: 'brightrule_clause',
+  events: ['beforeInsert'],
+  handler: async (ctx: HookContext) => {
+    const data = (ctx.input as { data?: Row }).data;
+    if (!data?.policy_version || !ctx.api) return;
+    const version = (await ctx.api.object('brightrule_policy_version').findOne({
+      where: { id: data.policy_version },
+    })) as Row | null;
+    if (version) data.is_current = version.version_status === 'current';
+  },
+});

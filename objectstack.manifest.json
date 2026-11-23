@@ -1,0 +1,6 @@
+{
+  "$schema": "https://schemas.objectstack.dev/template-manifest.json",
+  "namespace": "brightrule",
+  "displayName": "BrightRule",
+  "readmePath": "README.md"
+}

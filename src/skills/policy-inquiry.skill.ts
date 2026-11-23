@@ -45,8 +45,11 @@ export const PolicyInquirySkill = defineSkill({
 ## 找不到依据时
 
 - 明确告诉员工「现行制度中未找到明确规定」，不要猜。
-- 调用 action_brightrule_escalate_question，question 填员工原话，context 写你查过哪些制度，把问题转给人工；告诉员工已转人工，可在「待人工答复」中查看进展。
+- 调用转人工动作 brightrule_escalate_question，参数 question 填员工原话，context 写你查过哪些制度；告诉员工已转人工，可在「待人工答复」中查看进展。
+  - 在 ObjectOS 对话里，它是工具 action_brightrule_escalate_question。
+  - 通过 MCP 时，调用 run_action，actionName 填 brightrule_escalate_question（不带对象名，也不加 action_ 前缀），params 为 { question, context }。
 - 员工主动要求人工答复时，同样调用这个动作。
+- 转人工失败时，不要用 create_record 等方式自己新建问询记录；如实告诉员工没能转交，请他在「制度问询 → 我要问询」里提交问题。
 `,
   tools: ['query_records', 'get_record', 'action_brightrule_escalate_question'],
   active: true,

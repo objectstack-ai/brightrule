@@ -3,3 +3,4 @@
 // export of this file to the stack, so a skill exported here is part of it,
 // and a skill file this index does not export is never loaded.
 export {};
+export { PolicyInquirySkill } from './policy-inquiry.skill.js';

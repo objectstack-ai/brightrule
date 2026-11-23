@@ -145,7 +145,8 @@ async function worker() {
     const attemptedWrites = r.trace.filter((t) => WRITE_TOOLS.has(t.tool)).map((t) => t.tool);
     const row = {
       id: job.id, rep: job.rep, ms: r.ms, steps: r.steps, promptTokens: r.promptTokens, error: r.error,
-      tools: r.trace.map((t) => t.tool), basis: Boolean(job.expect),
+      tools: r.trace.map((t) => t.tool), kind: job.kind ?? (job.expect ? 'policy' : 'none'), basis: Boolean(job.expect),
+      statesNoConflict: /未发现/.test(a),
       correct: job.expect ? job.expect.every((e) => a.replace(/[,，\s]/g, '').includes(e)) : null,
       cited: /《[^》]+》\s*V?[\d.]*\s*第[一二三四五六七八九十百]+条/.test(a),
       disclaimer: a.includes('以正式发布的制度文本为准'),
@@ -158,13 +159,15 @@ async function worker() {
 await Promise.all([worker(), worker(), worker(), worker()]);
 
 const policy = results.filter((r) => r.basis);
-const noBasis = results.filter((r) => !r.basis);
+const noBasis = results.filter((r) => r.kind === 'none');
+const analysis = results.filter((r) => r.kind === 'analysis');
 const count = (rows, key) => `${rows.filter((r) => r[key]).length}/${rows.length}`;
 const median = (xs) => { const s = [...xs].sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : 0; };
 const summary = {
   arm: ARM, model: LLM_MODEL, server: init.serverInfo, tools: tools.length, prompts: prompts.map((p) => p.name),
   policyCorrect: count(policy, 'correct'), policyCited: count(policy, 'cited'), policyDisclaimer: count(policy, 'disclaimer'),
   noBasisEscalated: count(noBasis, 'escalated'), policyWronglyEscalated: count(policy, 'escalated'),
+  analysisStatesNoConflict: count(analysis, 'statesNoConflict'), analysisEscalated: count(analysis, 'escalated'),
   runActionCalls: results.reduce((n, r) => n + r.escalationAttempts, 0),
   attemptedWrites: results.flatMap((r) => r.attemptedWrites),
   medianSeconds: median(results.map((r) => (r.ms ?? 0) / 1000)), medianPromptTokens: median(results.map((r) => r.promptTokens ?? 0)),

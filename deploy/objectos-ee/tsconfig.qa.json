@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": ".build/qa",
+    "rootDir": "../../src/qa",
+    "declaration": false,
+    "sourceMap": false
+  },
+  "include": ["../../src/qa/**/*.ts"],
+  "exclude": ["../../src/qa/**/__tests__/**", "../../src/qa/**/*.test.ts"]
+}

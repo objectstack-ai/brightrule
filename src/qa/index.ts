@@ -1,0 +1,30 @@
+import { KnowledgeServicePlugin } from '@objectstack/service-knowledge';
+import { KeywordKnowledgePlugin } from './keyword-adapter.js';
+import { policyClauseKnowledgeSource, policyQaAdapter } from './knowledge-source.js';
+import { PolicyQaPlugin } from './policy-qa-plugin.js';
+import { ANSWER_QUESTION_FUNCTION, answerQuestion, QuestionAnswerHook } from './question-answer.hook.js';
+import { ClauseCurrentHook, VersionCurrentHook } from './version-current.hook.js';
+import { KnowledgeVectorPlugin } from './vector/plugin.js';
+
+/**
+ * 制度问询 — what the stack needs for AI policy inquiry.
+ *
+ * Retrieval engine, by environment (see docs/solution.md §07):
+ *   - OS_KNOWLEDGE_EMBEDDING_MODEL set → semantic retrieval; the vectors live in
+ *     PostgreSQL + pgvector (OS_KNOWLEDGE_VECTOR_STORE=pgvector, production) or
+ *     in memory (the default, development);
+ *   - unset → keyword retrieval over character bigrams (demos and tests).
+ */
+export function policyQaPlugins(): unknown[] {
+  return [
+    new KnowledgeServicePlugin({ sources: [policyClauseKnowledgeSource()] }),
+    policyQaAdapter() === 'vector' ? new KnowledgeVectorPlugin() : new KeywordKnowledgePlugin(),
+    new PolicyQaPlugin(),
+  ];
+}
+
+/** Lifecycle hooks: answer a question on save; keep clause currency in step with versions. */
+export const policyQaHooks = [QuestionAnswerHook, VersionCurrentHook, ClauseCurrentHook];
+
+/** Named functions the hooks reference (the stack's `functions` map). */
+export const policyQaFunctions = { [ANSWER_QUESTION_FUNCTION]: answerQuestion };

@@ -10,9 +10,23 @@
 - **带权限的 AI 问询** — 智能体直接按提问人的行级权限读取制度，看不到的制度不会出现在回答里。
 - **问完就能办** — 「怎么办」类问题直接引导到对应业务流程。
 
-产品定位、架构判断与分期见 [`docs/product-brief.md`](docs/product-brief.md)（草案，待评审）。
+产品定位、架构判断与分期见 [`docs/product-brief.md`](docs/product-brief.md)（草案，待评审）；
+制度全生命周期与 AI 问询的解决方案见 [`docs/solution.md`](docs/solution.md)（草案，待评审）。
 
-> 当前仓库是脚手架初始化状态：`note` 是脚手架自带的示例对象，领域模型在设计评审通过后替换它。
+> 分支 `feature/policy-inquiry` 是领域模型与问询的原型：制度、版本、条款、问询四个对象，
+> 问询保存即按现行条款答复并注明出处，版本设为现行时条款现行状态自动联动。
+> 脚手架自带的 `note` 示例对象尚未删除。
+
+### 问询检索方式（环境变量）
+
+| 设置 | 检索方式 |
+|---|---|
+| 不设 `OS_KNOWLEDGE_EMBEDDING_MODEL` | 关键词检索（中文按相邻两字切分），仅用于演示与测试 |
+| 设 `OS_KNOWLEDGE_EMBEDDING_MODEL` + `_API_KEY` + `_BASE_URL` | 语义检索，向量默认存内存（`OS_KNOWLEDGE_VECTOR_STORE=memory`） |
+| 再设 `OS_KNOWLEDGE_VECTOR_STORE=pgvector` + `OS_KNOWLEDGE_PGVECTOR_URL` | 向量持久化到 PostgreSQL + pgvector（生产） |
+
+全部变量见 `src/qa/vector/env.ts`。语义检索的拒答阈值（`src/qa/answer.ts` 中
+`MIN_ANSWER_SCORE_BY_ADAPTER.vector`）是暂定值，上线前须用真实问题集按所选模型校准。
 
 ---
 

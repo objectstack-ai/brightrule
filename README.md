@@ -26,7 +26,9 @@
 - **MCP 问询（外部 AI 客户端）**：客户自带的大模型（Claude、DeepSeek 等）连 `/api/v1/mcp`，
   平台把「制度问询」技能作为提示词 `brightrule-brightrule_policy_inquiry` 下发，已实测可用。
 - **表单问询（兜底）**：在「制度问询 → 我要问询」新建一条问题，保存即自动答复
-  （`src/qa/question-answer.hook.ts`）。
+  （`src/qa/question-answer.hook.ts`）：先检索出提问人可见的现行条款，再由平台配置的大模型
+  （系统设置 → AI）判断哪几条能回答、依据它们作答并注明出处（`src/qa/judge.ts`）。没有配置大模型、
+  调用失败或超时，则只列出可能相关的条款供参考，并转人工；不会把检索第一名直接当作答案。
 - **转人工**：对话或 MCP 中转人工的问题进入「待人工答复」，由归口部门答复。
 
 在 ObjectOS 企业版上部署见 [`deploy/objectos-ee`](deploy/objectos-ee/README.md)；
@@ -40,8 +42,9 @@
 | 设 `OS_KNOWLEDGE_EMBEDDING_MODEL` + `_API_KEY` + `_BASE_URL` | 语义检索，向量默认存内存（`OS_KNOWLEDGE_VECTOR_STORE=memory`） |
 | 再设 `OS_KNOWLEDGE_VECTOR_STORE=pgvector` + `OS_KNOWLEDGE_PGVECTOR_URL` | 向量持久化到 PostgreSQL + pgvector（生产） |
 
-全部变量见 `src/qa/vector/env.ts`。语义检索的拒答阈值（`src/qa/answer.ts` 中
-`MIN_ANSWER_SCORE_BY_ADAPTER.vector`）是暂定值，上线前须用真实问题集按所选模型校准。
+全部变量见 `src/qa/vector/env.ts`。检索只负责缩小范围（取前 8 条交给大模型），是否作答由大模型判断。
+`src/qa/answer.ts` 中的 `MIN_ANSWER_SCORE_BY_ADAPTER` 只决定无大模型时列出哪些参考条款，
+其中 `vector` 的取值是暂定值，上线前须按所选向量模型校准。
 
 ---
 

@@ -3,3 +3,4 @@
 // export of this file to the stack, so a action exported here is part of it,
 // and a action file this index does not export is never loaded.
 export {};
+export { EscalateQuestionAction } from './escalate-question.action.js';

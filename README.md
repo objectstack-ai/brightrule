@@ -12,6 +12,7 @@
 
 产品定位、架构判断与分期见 [`docs/product-brief.md`](docs/product-brief.md)（草案，待评审）；
 制度全生命周期与 AI 问询的解决方案见 [`docs/solution.md`](docs/solution.md)（草案，待评审）。
+选中一份制度问 AI（记录范围问询）、字段 / 子表 / 关联 / 附件怎样交给 AI、技能怎么用，见 [`docs/design-record-scoped-ai.md`](docs/design-record-scoped-ai.md)（草案，待评审）。
 
 > 分支 `feature/policy-inquiry` 是领域模型与问询的原型：制度、版本、条款、问询四个对象，
 > 版本设为现行时条款现行状态自动联动。脚手架自带的 `note` 示例对象尚未删除。

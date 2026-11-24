@@ -261,12 +261,97 @@ class RedactToolTest(unittest.TestCase):
                     leaked.leaks.append(t.original)
         self.assertTrue(leaked.leaks)
 
+    def test_markdown_for_original_and_redacted(self):
+        md = self.result.with_suffix('.md').read_text(encoding='utf-8')
+        orig = (self.run_root / '内部留存-勿外发' / '原件md' / '华东示例物流有限公司'
+                / '华东示例物流有限公司差旅办法.md').read_text(encoding='utf-8')
+        for s in SECRETS:
+            self.assertNotIn(s, md, f'脱敏后的 .md 残留：{s}')
+        self.assertIn('华东示例物流有限公司差旅费报销管理办法', orig)   # 原件 .md 保留原文
+        self.assertIn('本办法由财务共享中心负责解释。', orig)          # 按接受修订读取
+        self.assertNotIn('华东示例科技有限公司财务部', orig)
+        self.assertNotIn('董事会意见', orig)                         # 批注不输出
+        # 自动编号算成文字，条号加粗；表格；文本框
+        self.assertIn('**第一条** 一线城市住宿标准为每晚不超过 600 元。', md)
+        self.assertIn('| 座机 | 【固定电话】 |', md)
+        self.assertIn('文本框：人员A签发', md)
+
     def test_word_can_still_read_it(self):
         if not shutil.which('pandoc'):
             self.skipTest('pandoc 未安装')
         out = subprocess.run(['pandoc', '-f', 'docx', '-t', 'plain', str(self.result)],
                              capture_output=True, text=True, check=True).stdout
         self.assertIn('甲公司差旅费报销管理办法', out)
+
+
+class MarkdownTest(unittest.TestCase):
+    def md(self, body: str, numbering: str = '') -> str:
+        import docx2md
+        parts = {'word/document.xml': f'<w:document {W}><w:body>{body}</w:body></w:document>'.encode()}
+        if numbering:
+            parts['word/numbering.xml'] = f'<w:numbering {W}>{numbering}</w:numbering>'.encode()
+        return docx2md.docx_to_markdown(parts)
+
+    def test_numbering_levels_and_chinese_counting(self):
+        numbering = ('<w:abstractNum w:abstractNumId="0">'
+                     '<w:lvl w:ilvl="0"><w:numFmt w:val="chineseCounting"/><w:lvlText w:val="第%1条"/></w:lvl>'
+                     '<w:lvl w:ilvl="1"><w:numFmt w:val="chineseCounting"/><w:lvlText w:val="（%2）"/>'
+                     '<w:suff w:val="nothing"/></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>')
+
+        def p(lvl, text):
+            return (f'<w:p><w:pPr><w:numPr><w:ilvl w:val="{lvl}"/><w:numId w:val="1"/></w:numPr></w:pPr>'
+                    f'<w:r><w:t>{text}</w:t></w:r></w:p>')
+        body = ''.join(p(0, f'条{i}') for i in range(1, 11)) + p(1, '甲') + p(1, '乙') + p(0, '十一') + p(1, '丙')
+        md = self.md(body, numbering)
+        self.assertIn('**第十条** 条10', md)
+        self.assertIn('（一）甲', md)
+        self.assertIn('（二）乙', md)
+        self.assertIn('**第十一条** 十一', md)
+        self.assertIn('（一）丙', md)                 # 上级出现后下级重新编号
+
+    def test_chapter_heading_merged_cells_and_compat_copy(self):
+        body = ('<w:p><w:r><w:t>第一章 总则</w:t></w:r></w:p>'
+                '<w:tbl><w:tr><w:tc><w:tcPr><w:gridSpan w:val="2"/></w:tcPr><w:p><w:r><w:t>标题</w:t></w:r></w:p></w:tc></w:tr>'
+                '<w:tr><w:tc><w:p><w:r><w:t>a|b</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>c</w:t></w:r></w:p></w:tc></w:tr></w:tbl>'
+                '<w:p><w:r><mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">'
+                '<mc:Choice Requires="wps"><w:txbxContent><w:p><w:r><w:t>框内文字</w:t></w:r></w:p></w:txbxContent></mc:Choice>'
+                '<mc:Fallback><w:pict><w:txbxContent><w:p><w:r><w:t>框内文字</w:t></w:r></w:p></w:txbxContent></w:pict></mc:Fallback>'
+                '</mc:AlternateContent></w:r></w:p>'
+                '<w:p><w:r><w:t>1. 不是列表</w:t></w:r></w:p>')
+        md = self.md(body)
+        self.assertIn('## 第一章 总则', md)
+        self.assertIn('| 标题 |  |\n|---|---|\n| a\\|b | c |', md)
+        self.assertEqual(md.count('框内文字'), 1)     # 兼容副本不重复
+        self.assertIn('\\1. 不是列表', md)
+
+
+class SuspectTest(unittest.TestCase):
+    def test_generic_words_before_suffix_are_not_names(self):
+        text = ('员工外出参加非集团组织的培训，严格按照集团规定，根据各子公司情况，本办法由集团解释，'
+                '出差申请单报集团备案，已经C集团研究，B市C集团有限责任公司印发，合作单位南方未登记贸易有限公司。')
+        found = redact.suspects_in(text, [])
+        self.assertIn('C集团', found)
+        self.assertIn('B市C集团有限责任公司', found)
+        self.assertIn('南方未登记贸易有限公司', found)
+        for noise in ('非集团', '按照集团', '各子公司', '由集团', '报集团', '集团', '子公司'):
+            self.assertNotIn(noise, found)
+
+
+class DataPartTest(unittest.TestCase):
+    def test_chart_labels_and_compat_copies(self):
+        red = redact.Redactor([redact.Term('公司', '华东示例物流有限公司', '甲公司')], [])
+        res = redact.FileResult(source=Path('x.docx'))
+        chart = redact._parse('<c:chartSpace xmlns:c="urn:c"><c:v>华东示例物流有限公司</c:v></c:chartSpace>'.encode())
+        redact.redact_data_part(chart, red, 'word/charts/chart1.xml', res)
+        self.assertIn('甲公司', redact._serialize(chart).decode())
+        doc = redact._parse(
+            f'<w:document {W} xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><w:body>'
+            '<w:p><w:r><w:t>华东示例物流有限公司</w:t></w:r></w:p>'
+            '<mc:AlternateContent><mc:Fallback><w:p><w:r><w:t>华东示例物流有限公司</w:t></w:r></w:p></mc:Fallback>'
+            '</mc:AlternateContent></w:body></w:document>'.encode())
+        redact.redact_paragraphs(doc, red, 'word/document.xml', res)
+        self.assertNotIn('华东示例', redact._serialize(doc).decode())   # 副本也替换
+        self.assertEqual(len(res.hits), 2)                              # 图表 1 处 + 正文 1 处，副本不计
 
 
 if __name__ == '__main__':

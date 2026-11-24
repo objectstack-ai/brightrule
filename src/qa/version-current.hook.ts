@@ -59,21 +59,71 @@ export const VersionCurrentHook = defineHook({
   },
 });
 
+/** A reference field's id, whether the payload holds the id or the record. */
+function refId(value: unknown): string | undefined {
+  if (value && typeof value === 'object') return refId((value as Row).id);
+  return typeof value === 'string' && value !== '' ? value : undefined;
+}
+
+export const CLAUSE_POLICY_MISMATCH = 'CLAUSE_POLICY_MISMATCH';
+export const CLAUSE_VERSION_NOT_FOUND = 'CLAUSE_VERSION_NOT_FOUND';
+
+function refuse(code: string): never {
+  throw Object.assign(new Error(code), { code });
+}
+
 /**
- * A clause added to the current version is current from the moment it is
- * saved, so a maintainer splitting a published policy into clauses never has
- * to tick the flag by hand.
+ * Keep a clause's two parents in step, and its currency with its version.
+ *
+ * A clause names its policy (`policy`, the master its permissions follow) and
+ * its version (`policy_version`, the text it belongs to). The version already
+ * belongs to one policy, so the two must agree: a clause filed under policy A
+ * with policy B's version would be read under A's permissions while its text,
+ * and its currency, follow B.
+ *
+ * - The version decides: a save that names a version and no policy gets the
+ *   version's policy; one that names a different policy is refused.
+ * - Moving a clause to another version moves it to that version's policy.
+ * - A clause added to, or moved to, the current version is current from that
+ *   save, so a maintainer splitting a published policy into clauses never has
+ *   to tick the flag by hand.
  */
 export const ClauseCurrentHook = defineHook({
   name: 'brightrule_clause_current',
   object: 'brightrule_clause',
-  events: ['beforeInsert'],
+  events: ['beforeInsert', 'beforeUpdate'],
+  refusals: {
+    [CLAUSE_POLICY_MISMATCH]: {
+      message: '条款的「所属制度」必须是「所属版本」所属的制度。只选版本即可，所属制度会自动带出。',
+      status: 400,
+    },
+    [CLAUSE_VERSION_NOT_FOUND]: {
+      message: '找不到所选的制度版本，或你无权读取它。',
+      status: 400,
+    },
+  },
   handler: async (ctx: HookContext) => {
     const data = (ctx.input as { data?: Row }).data;
-    if (!data?.policy_version || !ctx.api) return;
+    if (!data || !ctx.api) return;
+    const previous = ctx.previous as Row | undefined;
+    const versionChanged = 'policy_version' in data;
+    const policyChanged = 'policy' in data;
+    // An update that touches neither parent (is_current, text, …) has nothing to check.
+    if (previous && !versionChanged && !policyChanged) return;
+
+    const versionId = refId(versionChanged ? data.policy_version : previous?.policy_version);
+    if (!versionId) return; // the field's own required check answers a missing version
     const version = (await ctx.api.object('brightrule_policy_version').findOne({
-      where: { id: data.policy_version },
+      where: { id: versionId },
     })) as Row | null;
-    if (version) data.is_current = version.version_status === 'current';
+    if (!version) refuse(CLAUSE_VERSION_NOT_FOUND);
+    const versionPolicy = refId(version.policy);
+
+    // The policy this save asks for: the payload's, else (version unchanged) the stored one.
+    const askedPolicy = refId(policyChanged ? data.policy : versionChanged ? undefined : previous?.policy);
+    if (askedPolicy === undefined) data.policy = versionPolicy;
+    else if (askedPolicy !== versionPolicy) refuse(CLAUSE_POLICY_MISMATCH);
+
+    if (!previous || versionChanged) data.is_current = version.version_status === 'current';
   },
 });

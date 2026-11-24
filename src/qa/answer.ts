@@ -1,12 +1,14 @@
 /**
- * Compose an inquiry's answer from retrieved clauses. Pure — the hook does the
- * retrieval and the permission check, this decides what the asker is told.
+ * Shapes shared by the inquiry answer, and the fallback used when no model
+ * can judge the retrieved clauses. Pure — the hook does the retrieval and the
+ * permission check.
  *
- * The answer is EXTRACTIVE: it quotes the best-matching current clause and
- * names where it comes from. It never states anything the clause does not
- * say, and when no clause matches well enough it says so and routes the
- * question to a person instead of guessing. A generative model can rewrite the
- * quote into a direct reply later; the citation and the hand-off stay.
+ * The answer itself is decided by a model reading every retrieved clause
+ * (`judge.ts`). Without one (no AI provider configured, an error, a timeout),
+ * nothing is presented as an answer: the best-matching current clauses are
+ * listed as references and the question goes to a person. Quoting the top hit
+ * as the answer was measured wrong on a real policy, with high scores (3 of 12
+ * questions on a 25-article policy), so it is not done.
  */
 
 /** A retrieved clause the asker may read, with its retrieval score. */
@@ -48,39 +50,43 @@ export const MIN_ANSWER_SCORE_BY_ADAPTER: Record<'keyword' | 'vector', number> =
   vector: 0.5,
 };
 
-/** How many runner-up clauses the answer lists as further reading. */
-const MAX_OTHER_REFERENCES = 2;
+/** How many clauses the fallback lists as references. */
+const MAX_REFERENCES = 3;
 
 export const NOT_FOUND_ANSWER =
   '未在现行制度中找到与该问题直接相关的条款。该问题已转归口部门人工答复，答复后会更新在这里。';
 
-export function composeAnswer(candidates: ClauseCandidate[], minScore = MIN_ANSWER_SCORE): ComposedAnswer {
-  const ranked = [...candidates].sort((a, b) => b.score - a.score);
+export const REFERENCE_INTRO = '未能自动判断答复。以下现行条款可能与问题相关，仅供参考：';
+export const REFERENCE_OUTRO = '该问题已转归口部门人工答复，答复后会更新在这里。';
+
+/**
+ * The fallback: never an answer, only references for the asker and the person
+ * who answers. Clauses below `minScore` are not listed; with none left, the
+ * question is reported as not found.
+ */
+export function composeReferenceAnswer(candidates: ClauseCandidate[], minScore = MIN_ANSWER_SCORE): ComposedAnswer {
+  const ranked = [...candidates].sort((a, b) => b.score - a.score).filter((c) => c.score >= minScore);
   const best = ranked[0];
-  if (!best || best.score < minScore) {
+  if (!best) {
     return {
       status: 'open',
       answer: NOT_FOUND_ANSWER,
       answer_source: 'ai',
       cited_clause: null,
-      match_score: round2(best?.score ?? 0),
+      match_score: round2(Math.max(0, ...candidates.map((c) => c.score))),
       needs_human: true,
       other_references: null,
     };
   }
-  const others = ranked
-    .slice(1)
-    .filter((c) => c.score >= minScore)
-    .slice(0, MAX_OTHER_REFERENCES)
-    .map((c) => `${c.citation}：${c.content}`);
+  const listed = ranked.slice(0, MAX_REFERENCES).map((c, i) => `${i + 1}. ${c.citation}：${c.content}`);
   return {
-    status: 'answered',
-    answer: `根据${best.citation}：${best.content}`,
+    status: 'open',
+    answer: [REFERENCE_INTRO, ...listed, REFERENCE_OUTRO].join('\n'),
     answer_source: 'ai',
-    cited_clause: best.id,
+    cited_clause: null,
     match_score: round2(best.score),
-    needs_human: false,
-    other_references: others.length > 0 ? others.join('\n') : null,
+    needs_human: true,
+    other_references: null,
   };
 }
 

@@ -78,7 +78,11 @@ ROLE_WORDS = ('签发人|联系人|经办人|负责人|审核人|审批人|批�
               '发言人|收件人|申请人|承办人|责任人|监督人|对接人|委托人|代理人|法定代表人|法人代表|主送|抄送|姓名')
 TITLE_WORDS = ('同志|先生|女士|董事长|副董事长|总经理|副总经理|总裁|副总裁|总监|书记|副书记|主任|副主任|部长|副部长|局长|副局长|'
                '处长|副处长|科长|副科长|经理|副经理|主席|副主席|院长|校长|行长|厂长|总工|会计师|律师')
-NAME_AFTER_ROLE = re.compile(r'(?:' + ROLE_WORDS + r')\s*[:：]\s*(' + SURNAME_RX + r'[一-龥]{1,2})(?![一-龥])')
+# 角色词后面：不要求常见姓氏（「习」「乜」这类姓也能找到）；字间可带排版空格（「张 三 丰」）
+SP = r'[ \t\u3000\u00a0]'
+ROLE_RX = re.compile(r'^(?:' + ROLE_WORDS + r')\s*[:：]?$')
+NAME_AFTER_ROLE = re.compile(r'(?:' + ROLE_WORDS + r')' + SP + r'*[:：]' + SP + r'*((?:[一-龥]' + SP + r'{0,4}){1,3}?[一-龥])(?=' + SP + r'*(?:$|[^一-龥 \t\u3000\u00a0]|(?:' + ROLE_WORDS + r'|印发|日期|电话|手机)))')
+NOT_A_NAME = re.compile(r'^(?:无|略|空|同上|见附件|待定|本人|另附|附后|签字|盖章|签名|领导|主任|部门|单位|本单位|各部门|各单位)$')
 NAME_BEFORE_TITLE = re.compile(r'(' + SURNAME_RX + r'[一-龥]{1,2}?)(?:' + TITLE_WORDS + r')')
 NAME_BAD_CHAR = set('的了和与及或在是为对由从向给按将把被以于等其该各本全每此这那所级内外上下中前后部门办会司处科局厅委院所组室队站总副正'
                     '经理事长任记员人者方式样些个次年月日号条款章节规定制度办法通知要求负责管理审批报销费用标准')
@@ -281,11 +285,24 @@ def places(para: str) -> List[Tuple[str, str]]:
     return out
 
 
+def plausible_name(raw: str) -> Optional[str]:
+    """去掉字间空格后是 2–4 个字、不像普通词语的，当作姓名。"""
+    name = re.sub(SP, '', raw).strip()
+    if not 2 <= len(name) <= 4 or not re.fullmatch(r'[一-龥]+', name) or NOT_A_NAME.match(name):
+        return None
+    if name[0] in '的了和与及或在是为对由从向给按将把被以于等其该各本全每此这那所见详如':
+        return None
+    if any(ch in NAME_BAD_CHAR for ch in name[1:]):
+        return None
+    return name
+
+
 def person_names(para: str) -> List[Tuple[str, str]]:
     out = []
     for m in NAME_AFTER_ROLE.finditer(para):
-        if not any(ch in NAME_BAD_CHAR for ch in m.group(1)[1:]):
-            out.append((m.group(1), '角色词后面的姓名（如「联系人：」）'))
+        name = plausible_name(m.group(1))
+        if name:
+            out.append((name, '角色词后面的姓名（如「签发人：」「联系人：」）'))
     for m in NAME_BEFORE_TITLE.finditer(para):
         name = m.group(1)
         start = m.start(1)
@@ -376,6 +393,11 @@ def paragraphs_of(path: Path) -> Tuple[List[str], List[str], List[str]]:
             people += [v for el in root.iter() for k, v in el.attrib.items() if k in (w('author'), w('initials')) and k == w('author')]
             if name != 'word/comments.xml':
                 accept_revisions(root)
+            for tr in root.iter(w('tr')):  # 表格里「签发人 | 张三」分在两个格子
+                cells = [''.join(t.text or '' for t in tc.iter(w('t'))).strip() for tc in tr.findall(w('tc'))]
+                for left, right in zip(cells, cells[1:]):
+                    if ROLE_RX.match(re.sub(SP, '', left)) and right:
+                        paras.append(f'{re.sub(SP, "", left).rstrip(":：")}：{right}')
             for p in root.iter(w('p')):
                 if _nearest(p, f'{{{MC}}}Fallback') is not None:
                     continue

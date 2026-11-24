@@ -577,14 +577,56 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     results.sort(key=lambda r: str(r.source))
     elapsed = time.monotonic() - started
 
+    summary = summarize(results, terms, patterns)
     write_mapping(internal / '对照表.csv', results, args.input)
-    write_report(internal / '报告.md', results, skipped, args, out_root, now, len(terms), len(patterns))
+    write_summary(internal / '替换汇总.csv', summary)
+    write_report(internal / '报告.md', results, skipped, args, out_root, now, len(terms), len(patterns), summary)
 
     failed = [r for r in results if r.error or r.leaks]
+    dict_rows = [s for s in summary if s.source == '词典']
+    dict_hits = sum(s.count for s in dict_rows)
+    rule_hits = sum(s.count for s in summary if s.source == '规则')
+    unused = [s for s in dict_rows if s.count == 0]
     print(f'处理 {len(results)} 个 .docx（{elapsed:.1f} 秒），跳过 {len(skipped)} 个其他文件，{len(failed)} 个需处理。')
+    print(f'共替换 {dict_hits + rule_hits} 处：词典 {dict_hits} 处（{len(dict_rows) - len(unused)}/{len(dict_rows)} 个词条命中），'
+          f'格式规则 {rule_hits} 处。' + (f'{len(unused)} 个词条未命中，见报告。' if unused else ''))
     print(f'脱敏文件：{docs_dir}')
     print(f'报告：{internal / "报告.md"}')
     return 1 if failed else 0
+
+
+@dataclass
+class SummaryRow:
+    source: str        # 词典 / 规则
+    category: str
+    original: str      # 词典原文；规则行为规则名
+    replacement: str
+    count: int = 0
+    files: set = field(default_factory=set)
+
+
+def summarize(results: List[FileResult], terms: Sequence[Term], patterns: Sequence[Pattern]) -> List[SummaryRow]:
+    """整批统计：每个词典词条、每条格式规则各替换了多少处、涉及几个文件；未命中的词条也列出（次数 0）。"""
+    by_term = OrderedDict((t.original.lower(), SummaryRow('词典', t.category, t.original, t.replacement)) for t in terms)
+    by_rule = OrderedDict((p.name, SummaryRow('规则', p.name, p.name, p.replacement)) for p in patterns)
+    for r in results:
+        for _part, h in r.hits:
+            row = by_term.get(h.original.lower())
+            if row is None or row.category != h.category:
+                row = by_rule.get(h.category)
+            if row is None:
+                continue
+            row.count += 1
+            row.files.add(str(r.source))
+    return list(by_term.values()) + list(by_rule.values())
+
+
+def write_summary(path: Path, summary: List[SummaryRow]) -> None:
+    with path.open('w', newline='', encoding='utf-8-sig') as f:
+        wr = csv.writer(f)
+        wr.writerow(['来源', '类别', '原文或规则', '替换为', '替换次数', '涉及文件数'])
+        for s in summary:
+            wr.writerow([s.source, s.category, s.original, s.replacement, s.count, len(s.files)])
 
 
 def write_mapping(path: Path, results: List[FileResult], input_dir: Path) -> None:
@@ -598,8 +640,11 @@ def write_mapping(path: Path, results: List[FileResult], input_dir: Path) -> Non
 
 
 def write_report(path: Path, results: List[FileResult], skipped: List[Path], args, out_root: Path,
-                 now: _dt.datetime, n_terms: int, n_patterns: int) -> None:
+                 now: _dt.datetime, n_terms: int, n_patterns: int, summary: List[SummaryRow]) -> None:
     ok = [r for r in results if not r.error and not r.leaks]
+    dict_rows = [s for s in summary if s.source == '词典']
+    rule_rows = [s for s in summary if s.source == '规则']
+    total = sum(s.count for s in summary)
     lines = [
         '# 脱敏报告（内部留存，勿外发）',
         '',
@@ -609,9 +654,24 @@ def write_report(path: Path, results: List[FileResult], skipped: List[Path], arg
         f'- 词典：{args.dict}（{n_terms} 条）；规则：{args.patterns}（{n_patterns} 条启用）',
         f'- 结果：{len(results)} 个 .docx，{len(ok)} 个通过复查，{len(results) - len(ok)} 个需处理；跳过 {len(skipped)} 个非 .docx 文件',
         '',
-        '只有 `脱敏文件/` 可以外发。本报告与 `对照表.csv` 含原文。',
+        '只有 `脱敏文件/` 可以外发。本报告、`对照表.csv` 与 `替换汇总.csv` 含原文。',
         '',
+        '## 替换汇总',
+        '',
+        f'共替换 **{total}** 处：词典 {sum(s.count for s in dict_rows)} 处，格式规则 {sum(s.count for s in rule_rows)} 处。'
+        '明细见 `替换汇总.csv`（每个词条一行）和 `对照表.csv`（每个文件每处一行）。',
+        '',
+        '| 来源 | 类别 | 原文或规则 | 替换为 | 替换次数 | 涉及文件数 |',
+        '|---|---|---|---|---:|---:|',
     ]
+    lines += [f'| {s.source} | {s.category} | {s.original} | {s.replacement} | {s.count} | {len(s.files)} |'
+              for s in summary if s.count]
+    unused = [s for s in dict_rows if s.count == 0]
+    if unused:
+        lines += ['', f'**未命中的词典条目（{len(unused)} 个）**：这些原文在所有文件里都没出现。'
+                  '可能是写法和文件里不一致（错字、全半角、空格），请核对：', '']
+        lines += [f'- {s.category}：{s.original}' for s in unused]
+    lines.append('')
     if skipped:
         lines += ['## 跳过的文件', '', '不是 .docx：.doc 请在 Word 中「另存为」.docx 后重新运行。', '']
         lines += [f'- {p.relative_to(args.input)}' for p in skipped] + ['']

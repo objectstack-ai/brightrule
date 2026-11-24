@@ -135,6 +135,7 @@ class RedactToolTest(unittest.TestCase):
         # 词典里再加一行地址别名，测试“扩展”只需加一行
         with cls.dict.open('a', encoding='utf-8') as f:
             f.write('其他,huadong-demo,demo,域名\n')
+            f.write('其他,从未出现的写法,X,用于测试未命中\n')
         cls.src_hash = hashlib.sha256(cls.docx.read_bytes()).hexdigest()
         cls.out = cls.tmp / '脱敏结果'
         cls.code = redact.main(['--input', str(cls.src), '--dict', str(cls.dict), '--output', str(cls.out)])
@@ -231,6 +232,22 @@ class RedactToolTest(unittest.TestCase):
         pairs = {(r['原文'], r['替换为']) for r in rows}
         self.assertIn(('华东示例物流有限公司', '甲公司'), pairs)
         self.assertIn(('13812345678', '【手机号】'), pairs)
+
+    def test_summary_counts_every_term_and_lists_unused_ones(self):
+        internal = self.run_root / '内部留存-勿外发'
+        with (internal / '替换汇总.csv').open(encoding='utf-8-sig') as f:
+            rows = {r['原文或规则']: r for r in csv.DictReader(f)}
+        # 「华东示例物流有限公司」：正文标题、页脚、标题属性、图片说明、文件名不计（文件名不在文档里）
+        self.assertEqual(rows['华东示例物流有限公司']['替换次数'], '4')
+        self.assertEqual(rows['华东示例物流有限公司']['涉及文件数'], '1')
+        self.assertEqual(rows['手机号']['替换次数'], '1')
+        self.assertEqual(rows['从未出现的写法']['替换次数'], '0')
+        report = (internal / '报告.md').read_text(encoding='utf-8')
+        self.assertIn('## 替换汇总', report)
+        # 未命中：特意加的词；只出现在被删除修订里的词；总在更长全称里的简称；被邮箱 / 网址规则整体替换的域名
+        self.assertIn('未命中的词典条目（4 个）', report)
+        for term in ('从未出现的写法', '华东示例科技有限公司', '- 集团：华东示例\n', 'huadong-demo'):
+            self.assertIn(term, report)
 
     def test_leak_check_fails_the_run(self):
         """词典外的敏感词在复查里不会被发现；词典里有但没被替换时，运行必须失败。"""

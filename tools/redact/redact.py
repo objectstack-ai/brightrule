@@ -189,8 +189,31 @@ def load_patterns(path: Optional[Path]) -> List[Pattern]:
 @dataclass
 class Hit:
     category: str
-    original: str
+    original: str      # 文件里的实际写法（可能带空格，如「张 三 丰」）
     replacement: str
+    term: str = ''     # 对应的词典原文；格式规则的命中为空
+
+
+# 排版时常在中文字之间加空格对齐（「签发人：张 三 丰」），词典原文按不带空格写，匹配时忽略这些空格
+SPACING = '[ \t\u3000\u00a0]'
+CJK = '[\u3400-\u9fff\uf900-\ufaff]'
+_SPACING_RX = re.compile(f'(?<={CJK}){SPACING}+|{SPACING}+(?={CJK})')
+
+
+def squash(text: str) -> str:
+    """去掉中文字前后的排版空格并转小写，作为词典查找的键。"""
+    return _SPACING_RX.sub('', text).lower()
+
+
+def term_regex(original: str) -> str:
+    """原文的正则：相邻两个字只要有一个是中文，中间允许出现排版空格。"""
+    core = _SPACING_RX.sub('', original)
+    out = []
+    for i, ch in enumerate(core):
+        if i and (re.match(CJK, ch) or re.match(CJK, core[i - 1])):
+            out.append(SPACING + '*')
+        out.append(re.escape(ch))
+    return ''.join(out)
 
 
 class Redactor:
@@ -199,19 +222,30 @@ class Redactor:
         self.patterns = list(patterns)
         # 长的原文优先，避免「华东某某」先于「华东某某有限公司」命中
         ordered = sorted(self.terms, key=lambda t: len(t.original), reverse=True)
-        self.by_original = {t.original.lower(): t for t in ordered}
+        self.by_original = {squash(t.original): t for t in ordered}
         self.term_rx = (
-            re.compile('|'.join(re.escape(t.original) for t in ordered), re.IGNORECASE)
+            re.compile('|'.join(term_regex(t.original) for t in ordered), re.IGNORECASE)
             if ordered else None
         )
+
+    def leaked_terms(self, text: str) -> List[Term]:
+        """文字里仍出现的词典原文（含带排版空格的写法）。"""
+        if self.term_rx is None:
+            return []
+        found: 'OrderedDict[str, Term]' = OrderedDict()
+        for m in self.term_rx.finditer(text):
+            t = self.by_original.get(squash(m.group(0)))
+            if t is not None:
+                found.setdefault(t.original, t)
+        return list(found.values())
 
     def find(self, text: str) -> List[Tuple[int, int, Hit]]:
         """返回不重叠的命中区间：词典优先于规则，靠前、较长者优先。"""
         spans: List[Tuple[int, int, int, Hit]] = []  # (start, end, priority, hit)
         if self.term_rx is not None:
             for m in self.term_rx.finditer(text):
-                t = self.by_original[m.group(0).lower()]
-                spans.append((m.start(), m.end(), 0, Hit(t.category, m.group(0), t.replacement)))
+                t = self.by_original[squash(m.group(0))]
+                spans.append((m.start(), m.end(), 0, Hit(t.category, m.group(0), t.replacement, t.original)))
         for p in self.patterns:
             for m in p.regex.finditer(text):
                 if m.end() > m.start():
@@ -539,10 +573,8 @@ def process_docx(src: Path, dst: Path, red: Redactor, orig_md: Optional[Path] = 
 
     # 泄漏复查：输出文件里不得再出现任何词典原文或规则命中
     for name, text in texts.items():
-        low = text.lower()
-        for t in red.terms:
-            if t.original.lower() in low:
-                result.leaks.append(f'{name}: 词典原文「{t.original}」')
+        for t in red.leaked_terms(text):
+            result.leaks.append(f'{name}: 词典原文「{t.original}」')
         for p in red.patterns:
             m = p.regex.search(text)
             if m:
@@ -715,7 +747,7 @@ def summarize(results: List[FileResult], terms: Sequence[Term], patterns: Sequen
     by_rule = OrderedDict((p.name, SummaryRow('规则', p.name, p.name, p.replacement)) for p in patterns)
     for r in results:
         for _part, h in r.hits:
-            row = by_term.get(h.original.lower())
+            row = by_term.get((h.term or h.original).lower())
             if row is None or row.category != h.category:
                 row = by_rule.get(h.category)
             if row is None:

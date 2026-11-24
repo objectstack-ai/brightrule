@@ -1,0 +1,643 @@
+#!/usr/bin/env python3
+"""制度文档脱敏工具 — 直接修改 Word（.docx），输出新的 .docx，源文件只读。
+
+用法：
+    python3 redact.py --input 原件目录 --dict 词典.csv [--patterns patterns.csv] [--output 脱敏结果]
+
+每次运行写入 <output>/<年月日-小时>/：
+    脱敏文件/            脱敏后的 .docx，目录结构与输入一致 —— 只有这一目录可以外发
+    内部留存-勿外发/      对照表.csv（原文 ↔ 替换值）与 报告.md —— 含原文，必须留在内部
+
+词典与规则的写法见 DICTIONARY.md。兼容 macOS 自带的 Python 3.9+，只依赖 lxml。
+"""
+from __future__ import annotations
+
+import argparse
+import csv
+import datetime as _dt
+import hashlib
+import io
+import os
+import re
+import sys
+import time
+import zipfile
+from collections import Counter, OrderedDict
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+
+from lxml import etree
+
+# ── Word XML 命名空间 ──────────────────────────────────────────────────────
+W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+WP = 'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing'
+REL = 'http://schemas.openxmlformats.org/package/2006/relationships'
+CT = 'http://schemas.openxmlformats.org/package/2006/content-types'
+CP = 'http://schemas.openxmlformats.org/package/2006/metadata/core-properties'
+DC = 'http://purl.org/dc/elements/1.1/'
+EP = 'http://schemas.openxmlformats.org/officeDocument/2006/extended-properties'
+XML_SPACE = '{http://www.w3.org/XML/1998/namespace}space'
+
+
+def w(tag: str) -> str:
+    return f'{{{W}}}{tag}'
+
+
+# 正文类部件：逐段替换文字
+TEXT_PARTS = re.compile(r'^word/(document|header\d*|footer\d*|footnotes|endnotes)\.xml$')
+# 批注部件：整体删除
+COMMENT_PARTS = re.compile(r'^word/comments(Extended|Ids|Extensible)?\.xml$')
+# 修订：删除的内容整体移除；插入的内容保留（去掉外壳）；格式修订记录移除
+REVISION_DROP = ('del', 'moveFrom')
+REVISION_UNWRAP = ('ins', 'moveTo')
+REVISION_MARKERS = (
+    'rPrChange', 'pPrChange', 'sectPrChange', 'tblPrChange', 'trPrChange', 'tcPrChange',
+    'tblGridChange', 'tblPrExChange', 'numberingChange', 'moveFromRangeStart', 'moveFromRangeEnd',
+    'moveToRangeStart', 'moveToRangeEnd', 'customXmlInsRangeStart', 'customXmlInsRangeEnd',
+    'customXmlDelRangeStart', 'customXmlDelRangeEnd',
+)
+# 可能残留机构名的写法，用于“疑似遗漏”提示（只提示，不替换）
+SUSPECT_ORG = re.compile(
+    r'[一-龥A-Za-z0-9（）()]{2,20}?'
+    r'(?:股份有限公司|有限责任公司|有限公司|分公司|子公司|集团|银行|研究院|事务所|律师所)'
+)
+TIANGAN = '甲乙丙丁戊己庚辛壬癸'
+
+
+# ── 词典与规则 ────────────────────────────────────────────────────────────
+@dataclass
+class Term:
+    category: str
+    original: str
+    replacement: str
+
+
+@dataclass
+class Pattern:
+    name: str
+    regex: 're.Pattern[str]'
+    replacement: str
+
+
+def read_csv_rows(path: Path) -> List[Dict[str, str]]:
+    """读取 UTF-8（含 Excel 的 BOM）或 GBK 编码的 CSV。"""
+    raw = path.read_bytes()
+    for enc in ('utf-8-sig', 'gbk'):
+        try:
+            text = raw.decode(enc)
+            break
+        except UnicodeDecodeError:
+            continue
+    else:
+        raise SystemExit(f'无法识别 {path} 的编码，请另存为 UTF-8 编码的 CSV。')
+    return [{(k or '').strip(): (v or '').strip() for k, v in row.items()}
+            for row in csv.DictReader(io.StringIO(text))]
+
+
+def auto_code(category: str, index: int) -> str:
+    """替换为留空时的自动代号：同一类别按词典中的出现顺序编号，稳定可复现。"""
+    if category in ('公司', '单位', '机构'):
+        return (TIANGAN[index] + '公司') if index < len(TIANGAN) else f'公司{index + 1}'
+    if category == '集团':
+        return (TIANGAN[index] + '集团') if index < len(TIANGAN) else f'集团{index + 1}'
+    if category in ('人名', '人员'):
+        return f'人员{_letters(index)}'
+    return f'{category or "信息"}{_letters(index)}'
+
+
+def _letters(index: int) -> str:
+    s, n = '', index
+    while True:
+        s = chr(ord('A') + n % 26) + s
+        n = n // 26 - 1
+        if n < 0:
+            return s
+
+
+def load_dictionary(path: Path) -> List[Term]:
+    rows = read_csv_rows(path)
+    if rows and '原文' not in rows[0]:
+        raise SystemExit(f'{path} 缺少表头「原文」。表头应为：类别,原文,替换为,备注（见 DICTIONARY.md）。')
+    terms: 'OrderedDict[str, Term]' = OrderedDict()
+    seen_per_category: Counter = Counter()
+    auto_by_key: Dict[Tuple[str, str], str] = {}
+    for n, row in enumerate(rows, start=2):
+        category = row.get('类别', '')
+        original = row.get('原文', '')
+        if category.startswith('#') or not original:
+            continue  # 注释行、空行
+        replacement = row.get('替换为', '')
+        if not replacement:
+            # 同类别下「原文」相同的行共用一个自动代号
+            key = (category, original)
+            if key not in auto_by_key:
+                auto_by_key[key] = auto_code(category, seen_per_category[category])
+                seen_per_category[category] += 1
+            replacement = auto_by_key[key]
+        if original in terms and terms[original].replacement != replacement:
+            raise SystemExit(f'{path} 第 {n} 行：「{original}」已出现过，且替换值不同。同一原文只能对应一个替换值。')
+        terms[original] = Term(category or '其他', original, replacement)
+    return list(terms.values())
+
+
+def load_patterns(path: Optional[Path]) -> List[Pattern]:
+    if path is None or not path.exists():
+        return []
+    out: List[Pattern] = []
+    for n, row in enumerate(read_csv_rows(path), start=2):
+        if row.get('名称', '').startswith('#') or row.get('启用', '是') in ('否', 'no', 'false', '0'):
+            continue
+        try:
+            rx = re.compile(row['正则'])
+        except (KeyError, re.error) as e:
+            raise SystemExit(f'{path} 第 {n} 行的正则无效：{e}')
+        out.append(Pattern(row.get('名称', f'规则{n}'), rx, row.get('替换为', '【已脱敏】')))
+    return out
+
+
+# ── 替换引擎 ──────────────────────────────────────────────────────────────
+@dataclass
+class Hit:
+    category: str
+    original: str
+    replacement: str
+
+
+class Redactor:
+    def __init__(self, terms: Sequence[Term], patterns: Sequence[Pattern]):
+        self.terms = list(terms)
+        self.patterns = list(patterns)
+        # 长的原文优先，避免「华东某某」先于「华东某某有限公司」命中
+        ordered = sorted(self.terms, key=lambda t: len(t.original), reverse=True)
+        self.by_original = {t.original.lower(): t for t in ordered}
+        self.term_rx = (
+            re.compile('|'.join(re.escape(t.original) for t in ordered), re.IGNORECASE)
+            if ordered else None
+        )
+
+    def find(self, text: str) -> List[Tuple[int, int, Hit]]:
+        """返回不重叠的命中区间：词典优先于规则，靠前、较长者优先。"""
+        spans: List[Tuple[int, int, int, Hit]] = []  # (start, end, priority, hit)
+        if self.term_rx is not None:
+            for m in self.term_rx.finditer(text):
+                t = self.by_original[m.group(0).lower()]
+                spans.append((m.start(), m.end(), 0, Hit(t.category, m.group(0), t.replacement)))
+        for p in self.patterns:
+            for m in p.regex.finditer(text):
+                if m.end() > m.start():
+                    spans.append((m.start(), m.end(), 1, Hit(p.name, m.group(0), p.replacement)))
+        spans.sort(key=lambda s: (s[0], s[2], -(s[1] - s[0])))
+        chosen: List[Tuple[int, int, Hit]] = []
+        cursor = -1
+        for start, end, _prio, hit in spans:
+            if start >= cursor:
+                chosen.append((start, end, hit))
+                cursor = end
+        return chosen
+
+    def redact_string(self, text: str) -> Tuple[str, List[Hit]]:
+        hits = self.find(text)
+        if not hits:
+            return text, []
+        out, last = [], 0
+        for start, end, hit in hits:
+            out.append(text[last:start])
+            out.append(hit.replacement)
+            last = end
+        out.append(text[last:])
+        return ''.join(out), [h for _s, _e, h in hits]
+
+
+# ── DOCX 处理 ─────────────────────────────────────────────────────────────
+@dataclass
+class FileResult:
+    source: Path
+    output: Optional[Path] = None
+    hits: List[Tuple[str, Hit]] = field(default_factory=list)  # (部件, 命中)
+    revisions_accepted: int = 0
+    comments_removed: int = 0
+    properties_cleared: List[str] = field(default_factory=list)
+    media: List[str] = field(default_factory=list)
+    embeddings: List[str] = field(default_factory=list)
+    suspects: List[str] = field(default_factory=list)
+    leaks: List[str] = field(default_factory=list)
+    error: Optional[str] = None
+
+
+def _parse(data: bytes) -> etree._Element:
+    return etree.fromstring(data, etree.XMLParser(remove_blank_text=False, resolve_entities=False, huge_tree=True))
+
+
+def _serialize(root: etree._Element) -> bytes:
+    return etree.tostring(root, xml_declaration=True, encoding='UTF-8', standalone=True)
+
+
+def accept_revisions(root: etree._Element) -> int:
+    count = 0
+    for tag in REVISION_DROP:
+        for el in list(root.iter(w(tag))):
+            parent = el.getparent()
+            if parent is None:
+                continue
+            # 段落标记上的 <w:del/>（在 rPr 里）只是标记，移除标记即可
+            parent.remove(el)
+            count += 1
+    for tag in REVISION_UNWRAP:
+        for el in list(root.iter(w(tag))):
+            parent = el.getparent()
+            if parent is None:
+                continue
+            if len(el) == 0:  # rPr 里的插入标记
+                parent.remove(el)
+                count += 1
+                continue
+            idx = parent.index(el)
+            for child in list(el):
+                parent.insert(idx, child)
+                idx += 1
+            parent.remove(el)
+            count += 1
+    for tag in REVISION_MARKERS:
+        for el in list(root.iter(w(tag))):
+            el.getparent().remove(el)
+            count += 1
+    return count
+
+
+def strip_comment_anchors(root: etree._Element) -> int:
+    count = 0
+    for tag in ('commentRangeStart', 'commentRangeEnd'):
+        for el in list(root.iter(w(tag))):
+            el.getparent().remove(el)
+    for ref in list(root.iter(w('commentReference'))):
+        run = ref.getparent()
+        holder = run.getparent() if run is not None else None
+        if run is not None and run.tag == w('r') and holder is not None:
+            holder.remove(run)
+        elif run is not None:
+            run.remove(ref)
+        count += 1
+    return count
+
+
+def _nearest(el: etree._Element, tag: str) -> Optional[etree._Element]:
+    for anc in el.iterancestors(tag):
+        return anc
+    return None
+
+
+def redact_paragraphs(root: etree._Element, red: Redactor, part: str, result: FileResult) -> None:
+    """跨格式片段替换：一个段落里的文字可能被拆成多个 <w:t>，先拼起来匹配，再写回。"""
+    for p in root.iter(w('p')):
+        nodes = [t for t in p.iter(w('t')) if _nearest(t, w('p')) is p]
+        if not nodes:
+            continue
+        texts = [t.text or '' for t in nodes]
+        joined = ''.join(texts)
+        hits = red.find(joined)
+        if not hits:
+            continue
+        # 每个节点在拼接文本中的起点
+        starts, pos = [], 0
+        for s in texts:
+            starts.append(pos)
+            pos += len(s)
+        new_texts = list(texts)
+        for start, end, hit in reversed(hits):  # 从后往前改，前面的位置不受影响
+            first = max(i for i, s in enumerate(starts) if s <= start) if start < pos else len(texts) - 1
+            last = max(i for i, s in enumerate(starts) if s < end)
+            for i in range(first, last + 1):
+                seg_start = starts[i]
+                lo = max(start - seg_start, 0)
+                hi = min(end - seg_start, len(texts[i]))
+                cur = new_texts[i]
+                # 位置基于原始文本；同一节点内从后往前替换，前段偏移不变
+                if i == first:
+                    new_texts[i] = cur[:lo] + hit.replacement + cur[hi:] if i == last else cur[:lo] + hit.replacement
+                elif i == last:
+                    new_texts[i] = cur[hi:]
+                else:
+                    new_texts[i] = ''
+            result.hits.append((part, hit))
+        for t, old, new in zip(nodes, texts, new_texts):
+            if new != old:
+                t.text = new
+                t.set(XML_SPACE, 'preserve')
+
+
+def redact_isolated_text(root: etree._Element, red: Redactor, part: str, result: FileResult) -> None:
+    """域代码（如 HYPERLINK "mailto:…"）和图片说明文字单独处理。"""
+    for el in root.iter(w('instrText')):
+        if el.text:
+            el.text, hits = red.redact_string(el.text)
+            result.hits.extend((part, h) for h in hits)
+    for el in root.iter(f'{{{WP}}}docPr'):
+        for attr in ('descr', 'title', 'name'):
+            if el.get(attr):
+                new, hits = red.redact_string(el.get(attr))
+                el.set(attr, new)
+                result.hits.extend((part, h) for h in hits)
+
+
+def redact_core_props(root: etree._Element, red: Redactor, result: FileResult) -> None:
+    clear = [(DC, 'creator'), (CP, 'lastModifiedBy'), (CP, 'keywords'), (DC, 'description'),
+             (DC, 'subject'), (CP, 'category'), (CP, 'contentStatus')]
+    for ns, tag in clear:
+        for el in root.iter(f'{{{ns}}}{tag}'):
+            if el.text:
+                el.text = ''
+                result.properties_cleared.append(tag)
+    for el in root.iter(f'{{{DC}}}title'):
+        if el.text:
+            el.text, hits = red.redact_string(el.text)
+            result.hits.extend(('docProps/core.xml', h) for h in hits)
+
+
+def redact_app_props(root: etree._Element, result: FileResult) -> None:
+    for tag in ('Company', 'Manager', 'Template', 'HyperlinkBase'):
+        for el in root.iter(f'{{{EP}}}{tag}'):
+            if el.text:
+                el.text = ''
+                result.properties_cleared.append(tag)
+
+
+def redact_rels(root: etree._Element, red: Redactor, part: str, result: FileResult, drop_types: Iterable[str]) -> None:
+    drop = tuple(drop_types)
+    for rel in list(root.iter(f'{{{REL}}}Relationship')):
+        if rel.get('Type', '').endswith(drop) and drop:
+            root.remove(rel)
+            continue
+        if rel.get('TargetMode') == 'External' and rel.get('Target'):
+            new, hits = red.redact_string(rel.get('Target'))
+            rel.set('Target', new)
+            result.hits.extend((part, h) for h in hits)
+
+
+def all_text(data: Dict[str, bytes]) -> Dict[str, str]:
+    """输出文件里所有能读到的内容（用于泄漏复查）：各部件的文字、外部链接地址、图片说明。
+
+    不含 XML 命名空间和关系类型这类 Word 自身的结构标识，否则网址规则会误报。
+    """
+    out = {}
+    for name, blob in data.items():
+        if not name.endswith(('.xml', '.rels')):
+            continue
+        try:
+            root = _parse(blob)
+        except etree.XMLSyntaxError:
+            continue
+        texts = [t for t in root.itertext()]
+        attrs = [rel.get('Target', '') for rel in root.iter(f'{{{REL}}}Relationship')
+                 if rel.get('TargetMode') == 'External']
+        attrs += [el.get(a, '') for el in root.iter(f'{{{WP}}}docPr') for a in ('descr', 'title', 'name')]
+        if TEXT_PARTS.match(name):
+            # 正文按段落拼接，才能查出跨格式片段残留的原文
+            paras = [''.join(t.text or '' for t in p.iter(w('t')) if _nearest(t, w('p')) is p) for p in root.iter(w('p'))]
+            texts.extend(paras)
+        out[name] = '\n'.join(texts + attrs)
+    return out
+
+
+def process_docx(src: Path, dst: Path, red: Redactor) -> FileResult:
+    result = FileResult(source=src)
+    with zipfile.ZipFile(src) as zin:
+        infos = zin.infolist()
+        parts = {i.filename: zin.read(i.filename) for i in infos}
+
+    removed = {n for n in parts if COMMENT_PARTS.match(n) or n == 'docProps/custom.xml'}
+    comment_rel_types = ('/comments', '/commentsExtended', '/commentsIds', '/commentsExtensible', '/custom-properties')
+    out: Dict[str, bytes] = {}
+    for name, blob in parts.items():
+        if name in removed:
+            if COMMENT_PARTS.match(name) and name == 'word/comments.xml':
+                result.comments_removed += len(_parse(blob).findall(w('comment')))
+            continue
+        if name.startswith('word/media/'):
+            result.media.append(name)
+        if name.startswith('word/embeddings/'):
+            result.embeddings.append(name)
+        if TEXT_PARTS.match(name):
+            root = _parse(blob)
+            result.revisions_accepted += accept_revisions(root)
+            strip_comment_anchors(root)
+            redact_paragraphs(root, red, name, result)
+            redact_isolated_text(root, red, name, result)
+            blob = _serialize(root)
+        elif name == 'word/settings.xml':
+            root = _parse(blob)
+            for el in list(root.iter(w('trackRevisions'))):  # 不再记录修订
+                el.getparent().remove(el)
+            blob = _serialize(root)
+        elif name == 'docProps/core.xml':
+            root = _parse(blob)
+            redact_core_props(root, red, result)
+            blob = _serialize(root)
+        elif name == 'docProps/app.xml':
+            root = _parse(blob)
+            redact_app_props(root, result)
+            blob = _serialize(root)
+        elif name.endswith('.rels'):
+            root = _parse(blob)
+            redact_rels(root, red, name, result, comment_rel_types)
+            blob = _serialize(root)
+        elif name == '[Content_Types].xml':
+            root = _parse(blob)
+            for ov in list(root.iter(f'{{{CT}}}Override')):
+                if ov.get('PartName', '').lstrip('/') in removed:
+                    root.remove(ov)
+            blob = _serialize(root)
+        out[name] = blob
+
+    # 疑似遗漏：形如“××有限公司”但不在词典里的写法（已替换成代号的不算）
+    replacements = {t.replacement for t in red.terms}
+    for name in out:
+        if TEXT_PARTS.match(name):
+            for text in all_text({name: out[name]}).values():
+                for m in SUSPECT_ORG.finditer(text):
+                    s = m.group(0)
+                    if any(r and r in s for r in replacements):
+                        continue
+                    if s not in result.suspects:
+                        result.suspects.append(s)
+
+    # 泄漏复查：输出文件里不得再出现任何词典原文或规则命中
+    for name, text in all_text(out).items():
+        low = text.lower()
+        for t in red.terms:
+            if t.original.lower() in low:
+                result.leaks.append(f'{name}: 词典原文「{t.original}」')
+        for p in red.patterns:
+            m = p.regex.search(text)
+            if m:
+                result.leaks.append(f'{name}: 规则「{p.name}」命中 {m.group(0)}')
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(dst, 'w') as zout:
+        for info in infos:
+            if info.filename in out:
+                zout.writestr(info, out[info.filename], compress_type=info.compress_type)
+    result.output = dst
+    return result
+
+
+# ── 运行一批文件 ──────────────────────────────────────────────────────────
+def run_dir(base: Path, now: _dt.datetime) -> Path:
+    stamp = now.strftime('%Y%m%d-%H')
+    target = base / stamp
+    n = 2
+    while target.exists():
+        target = base / f'{stamp}-{n}'
+        n += 1
+    return target
+
+
+def sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+_RED: Optional['Redactor'] = None
+
+
+def _init_worker(red: 'Redactor') -> None:
+    global _RED
+    _RED = red
+
+
+def _worker(src: Path, dst: Path) -> FileResult:
+    before = sha256(src)
+    try:
+        res = process_docx(src, dst, _RED)
+    except (zipfile.BadZipFile, etree.XMLSyntaxError, KeyError, ValueError) as e:
+        res = FileResult(source=src, error=f'{type(e).__name__}: {e}')
+    if sha256(src) != before:  # 源文件只读的保证
+        res.error = '源文件在处理过程中被修改（不应发生）'
+    return res
+
+
+def _progress(done: int, total: int, started: float) -> None:
+    if done == total or done % 50 == 0:
+        spent = time.monotonic() - started
+        left = spent / done * (total - done)
+        print(f'  {done}/{total}  已用 {spent:.0f} 秒，预计还需 {left:.0f} 秒', flush=True)
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    ap = argparse.ArgumentParser(description='制度文档（.docx）脱敏')
+    ap.add_argument('--input', required=True, type=Path, help='原件目录（只读，含子目录）')
+    ap.add_argument('--dict', required=True, type=Path, help='替换词典 CSV（见 DICTIONARY.md）')
+    ap.add_argument('--patterns', type=Path, default=Path(__file__).with_name('patterns.csv'),
+                    help='格式规则 CSV，默认使用工具自带的 patterns.csv')
+    ap.add_argument('--output', type=Path, default=Path('脱敏结果'), help='结果根目录，默认 ./脱敏结果')
+    ap.add_argument('--jobs', type=int, default=os.cpu_count() or 1,
+                    help='同时处理的文件数，默认等于 CPU 核数；设为 1 则逐个处理')
+    args = ap.parse_args(argv)
+
+    if not args.input.is_dir():
+        raise SystemExit(f'原件目录不存在：{args.input}')
+    terms = load_dictionary(args.dict)
+    patterns = load_patterns(args.patterns)
+    red = Redactor(terms, patterns)
+
+    now = _dt.datetime.now()
+    out_root = run_dir(args.output, now)
+    docs_dir = out_root / '脱敏文件'
+    internal = out_root / '内部留存-勿外发'
+    internal.mkdir(parents=True)
+
+    sources = sorted(p for p in args.input.rglob('*') if p.is_file() and not p.name.startswith(('~$', '.')))
+    skipped = [p for p in sources if p.suffix.lower() != '.docx']
+    jobs = []
+    for src in sources:
+        if src.suffix.lower() != '.docx':
+            continue
+        rel = src.relative_to(args.input)
+        new_stem, _ = red.redact_string(rel.stem)
+        new_parent = Path(*[red.redact_string(part)[0] for part in rel.parent.parts]) if rel.parent.parts else Path()
+        jobs.append((src, docs_dir / new_parent / (new_stem + '.docx')))
+    clashes = [d for d, n in Counter(d for _s, d in jobs).items() if n > 1]
+    if clashes:
+        raise SystemExit('以下输出文件名在脱敏后重名（不同原件被替换成同一个名字），请调整词典后重试：\n'
+                         + '\n'.join(f'  {c}' for c in clashes))
+
+    started = time.monotonic()
+    results: List[FileResult] = []
+    if args.jobs > 1 and len(jobs) > 1:
+        with ProcessPoolExecutor(max_workers=args.jobs, initializer=_init_worker, initargs=(red,)) as pool:
+            futures = [pool.submit(_worker, src, dst) for src, dst in jobs]
+            for n, fut in enumerate(as_completed(futures), start=1):
+                results.append(fut.result())
+                _progress(n, len(jobs), started)
+    else:
+        _init_worker(red)
+        for n, (src, dst) in enumerate(jobs, start=1):
+            results.append(_worker(src, dst))
+            _progress(n, len(jobs), started)
+    results.sort(key=lambda r: str(r.source))
+    elapsed = time.monotonic() - started
+
+    write_mapping(internal / '对照表.csv', results, args.input)
+    write_report(internal / '报告.md', results, skipped, args, out_root, now, len(terms), len(patterns))
+
+    failed = [r for r in results if r.error or r.leaks]
+    print(f'处理 {len(results)} 个 .docx（{elapsed:.1f} 秒），跳过 {len(skipped)} 个其他文件，{len(failed)} 个需处理。')
+    print(f'脱敏文件：{docs_dir}')
+    print(f'报告：{internal / "报告.md"}')
+    return 1 if failed else 0
+
+
+def write_mapping(path: Path, results: List[FileResult], input_dir: Path) -> None:
+    with path.open('w', newline='', encoding='utf-8-sig') as f:
+        wr = csv.writer(f)
+        wr.writerow(['文件', '部件', '类别', '原文', '替换为', '次数'])
+        for r in results:
+            counts = Counter((part, h.category, h.original, h.replacement) for part, h in r.hits)
+            for (part, cat, orig, repl), n in sorted(counts.items()):
+                wr.writerow([str(r.source.relative_to(input_dir)), part, cat, orig, repl, n])
+
+
+def write_report(path: Path, results: List[FileResult], skipped: List[Path], args, out_root: Path,
+                 now: _dt.datetime, n_terms: int, n_patterns: int) -> None:
+    ok = [r for r in results if not r.error and not r.leaks]
+    lines = [
+        '# 脱敏报告（内部留存，勿外发）',
+        '',
+        f'- 时间：{now.strftime("%Y-%m-%d %H:%M:%S")}',
+        f'- 原件目录：{args.input}',
+        f'- 输出目录：{out_root}',
+        f'- 词典：{args.dict}（{n_terms} 条）；规则：{args.patterns}（{n_patterns} 条启用）',
+        f'- 结果：{len(results)} 个 .docx，{len(ok)} 个通过复查，{len(results) - len(ok)} 个需处理；跳过 {len(skipped)} 个非 .docx 文件',
+        '',
+        '只有 `脱敏文件/` 可以外发。本报告与 `对照表.csv` 含原文。',
+        '',
+    ]
+    if skipped:
+        lines += ['## 跳过的文件', '', '不是 .docx：.doc 请在 Word 中「另存为」.docx 后重新运行。', '']
+        lines += [f'- {p.relative_to(args.input)}' for p in skipped] + ['']
+    for r in results:
+        rel = r.source.relative_to(args.input)
+        status = '❌ 需处理' if (r.error or r.leaks) else '✅ 通过复查'
+        lines += [f'## {rel} — {status}', '']
+        if r.error:
+            lines += [f'- 错误：{r.error}', '']
+            continue
+        lines.append(f'- 输出：{r.output.relative_to(out_root) if r.output else "-"}')
+        cats = Counter(h.category for _p, h in r.hits)
+        lines.append('- 替换：' + ('，'.join(f'{c} {n} 处' for c, n in cats.most_common()) if cats else '无'))
+        lines.append(f'- 接受修订：{r.revisions_accepted} 处；删除批注：{r.comments_removed} 条')
+        if r.properties_cleared:
+            lines.append('- 清空文档属性：' + '、'.join(sorted(set(r.properties_cleared))))
+        if r.leaks:
+            lines.append('- **泄漏复查未通过**：')
+            lines += [f'  - {x}' for x in r.leaks]
+        if r.media or r.embeddings:
+            lines.append(f'- **需人工检查**：图片 {len(r.media)} 个、嵌入对象 {len(r.embeddings)} 个（工具不处理图片和嵌入文件里的文字）')
+        if r.suspects:
+            lines.append('- **疑似遗漏**（像机构名但不在词典里，确认后加入词典重跑）：' + '、'.join(r.suspects[:30]))
+        lines.append('')
+    path.write_text('\n'.join(lines), encoding='utf-8')
+
+
+if __name__ == '__main__':
+    sys.exit(main())

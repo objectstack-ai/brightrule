@@ -7,10 +7,16 @@
 - 表格 → Markdown 表格（合并单元格展开为空格子）；文本框里的文字单独成段。
 - 脚注放在文末；图片写成「（图片）」；页眉页脚不输出。
 - 新版 Word 为兼容旧版会把文本框、形状再存一份（mc:Fallback），只读第一份，不重复。
+
+附件拆分（split_document）：正文之后单独一行「附件」「附件1」的位置是附件的起点，下一行是附件标题；
+每个附件到下一个附件、或到文末版记（「……印发」「抄送：」）为止。版记归正文。
 """
 from __future__ import annotations
 
+import copy
+import io
 import re
+import zipfile
 from typing import Dict, List, Optional, Tuple
 
 from lxml import etree
@@ -34,7 +40,10 @@ CN_LEGAL = '零壹贰叁肆伍陆柒捌玖'
 CHAPTER = re.compile(r'^第[零〇一二三四五六七八九十百千0-9]+章')
 SECTION = re.compile(r'^第[零〇一二三四五六七八九十百千0-9]+节')
 CLAUSE = re.compile(r'^(第[零〇一二三四五六七八九十百千0-9]+条)[\s\u3000]*')
-MD_LEADING = re.compile(r'^([#>*+\-]|\d+[.)])')
+MD_LEADING = re.compile(r'^([#>*+\-]|\d+[.)])(\s|$)')
+ATTACH_START = re.compile(r'^附\s*件\s*([0-9０-９]{1,2}|[一二三四五六七八九十]{1,2})?\s*[:：]?$')
+COLOPHON = re.compile(r'(印发|印制)$|^抄\s*送\s*[:：]')
+BAD_NAME = re.compile(r'[\\/:*?"<>|\r\n\t]+')
 
 
 def _parse(blob: Optional[bytes]) -> Optional[etree._Element]:
@@ -356,13 +365,139 @@ class Converter:
         if self.doc is None:
             return ''
         body = self.doc.find(w('body'))
-        blocks = self.blocks(body if body is not None else self.doc)
-        notes = [f'[^{n}]: {self.footnotes.get(n, "")}' for n in self.used_notes]
-        if notes:
-            blocks += ['---'] + notes
+        return self.render(list(body if body is not None else self.doc))
+
+    def render(self, elements: List[etree._Element], notes: bool = True) -> str:
+        holder = etree.Element(w('body'))
+        holder.extend(copy.deepcopy(e) for e in elements)
+        blocks = self.blocks(holder)
+        if not notes:
+            return '\n\n'.join(blocks) + '\n'
+        lines = [f'[^{n}]: {self.footnotes.get(n, "")}' for n in self.used_notes]
+        if lines:
+            blocks += ['---'] + lines
         return '\n\n'.join(blocks) + '\n'
 
 
 def docx_to_markdown(parts: Dict[str, bytes]) -> str:
-    """parts：docx 包内各部件（文件名 → 字节）。"""
+    """parts：docx 包内各部件（文件名 → 字节）。整篇转换，不拆附件。"""
     return Converter(parts).convert()
+
+
+# ── 附件拆分 ──────────────────────────────────────────────────────────────
+class Attachment:
+    def __init__(self, number: int, title: str, blocks: List[etree._Element]):
+        self.number = number
+        self.title = title
+        self.blocks = blocks
+        self.tables = sum(1 for b in blocks for _ in b.iter(w('tbl')))
+
+    @property
+    def name(self) -> str:
+        """文件名（不含扩展名），如「附件1-C集团接待审批表」。"""
+        title = BAD_NAME.sub('_', self.title).strip(' ._')[:60]
+        return f'附件{self.number}' + (f'-{title}' if title else '')
+
+
+def _plain(el: etree._Element) -> str:
+    return ''.join(t.text or '' for t in el.iter(w('t'))
+                   if not any(a.tag == f'{{{MC}}}Fallback' for a in t.iterancestors())).strip()
+
+
+def _cn_int(s: str) -> int:
+    s = s.translate(str.maketrans('０１２３４５６７８９', '0123456789'))
+    if s.isdigit():
+        return int(s)
+    n = {c: i for i, c in enumerate(CN_DIGITS)}
+    if s == '十':
+        return 10
+    if s.startswith('十'):
+        return 10 + n.get(s[1], 0)
+    if s.endswith('十'):
+        return n.get(s[0], 1) * 10
+    return n.get(s[0], 0) * 10 + n.get(s[-1], 0) if len(s) == 2 else n.get(s, 0)
+
+
+def split_document(doc: etree._Element) -> Tuple[List[etree._Element], List[Attachment], List[etree._Element]]:
+    """把正文的顶层块分成：正文、各附件、文末版记。没有附件时附件列表为空、版记为空。"""
+    body = doc.find(w('body'))
+    blocks = [b for b in body if b.tag != w('sectPr')] if body is not None else []
+    starts: List[Tuple[int, Optional[int]]] = []
+    for i, b in enumerate(blocks):
+        if b.tag == w('p'):
+            m = ATTACH_START.match(_plain(b))
+            if m:
+                starts.append((i, _cn_int(m.group(1)) if m.group(1) else None))
+    if not starts:
+        return blocks, [], []
+    end_all = len(blocks)
+    for i in range(starts[-1][0] + 1, len(blocks)):
+        if blocks[i].tag == w('p') and COLOPHON.search(_plain(blocks[i])):
+            end_all = i
+            break
+    # 版记前面成串的空段落（排版用的空行）也归版记
+    while end_all > starts[-1][0] + 1 and blocks[end_all - 1].tag == w('p') and not _plain(blocks[end_all - 1]):
+        end_all -= 1
+    bounds = [s for s, _n in starts[1:]] + [end_all]
+    attachments = []
+    for k, ((start, number), end) in enumerate(zip(starts, bounds), start=1):
+        part = blocks[start:end]  # 含「附件1」这一行，单独打开时也知道是第几个附件
+        title = ''
+        for b in part[1:]:
+            if b.tag == w('tbl'):
+                break
+            if b.tag == w('p') and _plain(b):
+                title = _plain(b)
+                break
+        attachments.append(Attachment(number or k, title, part))
+    return blocks[:starts[0][0]], attachments, blocks[end_all:]
+
+
+def document_markdown(parts: Dict[str, bytes], split: bool = True) -> Tuple[str, List[Tuple[Attachment, str]]]:
+    """正文 Markdown 与每个附件的 Markdown。split=False 或没有附件时，附件列表为空、正文即整篇。"""
+    conv = Converter(parts)
+    if conv.doc is None:
+        return '', []
+    main, attachments, colophon = split_document(conv.doc)
+    if not split or not attachments:
+        return conv.convert(), []
+    main_md = conv.render(main + colophon)
+    att_md = [(a, conv.render(a.blocks, notes=False)) for a in attachments]
+    listing = '\n'.join(f'> - [{a.name}]({a.name}.md)' for a in attachments)
+    main_md = main_md.rstrip('\n') + '\n\n> 附件已拆分为单独文件：\n>\n' + listing + '\n'
+    return main_md, att_md
+
+
+def attachment_docx(parts: Dict[str, bytes], att: Attachment) -> bytes:
+    """只含这个附件内容的 .docx：样式、编号、页面设置沿用原文件，不带嵌入字体。"""
+    root = _parse(parts['word/document.xml'])
+    body = root.find(w('body'))
+    sect = body.find(w('sectPr'))
+    for c in list(body):
+        body.remove(c)
+    for b in att.blocks:
+        body.append(copy.deepcopy(b))
+    if sect is not None:
+        body.append(sect)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
+        for name, data in parts.items():
+            if name.startswith('word/fonts/') or name == 'word/_rels/fontTable.xml.rels' or name.endswith('/'):
+                continue
+            if name == 'word/document.xml':
+                data = etree.tostring(root, xml_declaration=True, encoding='UTF-8', standalone=True)
+            elif name == 'word/fontTable.xml':
+                ft = _parse(data)
+                if ft is not None:
+                    for tag in ('embedRegular', 'embedBold', 'embedItalic', 'embedBoldItalic'):
+                        for e in list(ft.iter(w(tag))):
+                            e.getparent().remove(e)
+                    data = etree.tostring(ft, xml_declaration=True, encoding='UTF-8', standalone=True)
+            elif name == 'word/settings.xml':
+                st = _parse(data)
+                if st is not None:
+                    for e in list(st.iter(w('embedTrueTypeFonts'))) + list(st.iter(w('saveSubsetFonts'))):
+                        e.getparent().remove(e)
+                    data = etree.tostring(st, xml_declaration=True, encoding='UTF-8', standalone=True)
+            z.writestr(name, data)
+    return buf.getvalue()

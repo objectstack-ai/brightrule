@@ -324,6 +324,35 @@ class MarkdownTest(unittest.TestCase):
         self.assertEqual(md.count('框内文字'), 1)     # 兼容副本不重复
         self.assertIn('\\1. 不是列表', md)
 
+    def test_attachments_split_from_body(self):
+        import docx2md
+
+        def p(text, page_break=False):
+            br = '<w:r><w:br w:type="page"/></w:r>' if page_break else ''
+            return f'<w:p>{br}<w:r><w:t>{text}</w:t></w:r></w:p>'
+        tbl = '<w:tbl><w:tr><w:tc><w:p><w:r><w:t>申请人</w:t></w:r></w:p></w:tc><w:tc><w:p/></w:tc></w:tr></w:tbl>'
+        body = (p('第一条 正文。') + p('附件：1.审批表') + p('2.清单') + p('附件1', True) + p('审批表') + tbl
+                + p('附件2', True) + p('清单') + tbl + p('备注：报办公室备案。') + '<w:p/><w:p/>'
+                + p('某某办公室  2025年1月9日印发') + '<w:sectPr/>')
+        parts = {'word/document.xml': f'<w:document {W}><w:body>{body}</w:body></w:document>'.encode()}
+        main, atts = docx2md.document_markdown(parts)
+        self.assertEqual([a.name for a, _md in atts], ['附件1-审批表', '附件2-清单'])
+        self.assertIn('2.清单', main)                          # 「2.」后无空格，不是列表，不转义
+        self.assertIn('2025年1月9日印发', main)                 # 版记归正文
+        self.assertNotIn('| 申请人 |', main)
+        self.assertIn('[附件1-审批表](附件1-审批表.md)', main)
+        self.assertIn('| 申请人 |  |', atts[0][1])
+        self.assertIn('备注：报办公室备案。', atts[1][1])       # 表后的备注属于附件
+        self.assertNotIn('印发', atts[1][1])
+        docx = docx2md.attachment_docx(parts, atts[1][0])
+        with zipfile.ZipFile(__import__('io').BytesIO(docx)) as z:
+            xml = z.read('word/document.xml').decode()
+        self.assertIn('附件2', xml)
+        self.assertIn('清单', xml)
+        self.assertNotIn('审批表', xml)
+        self.assertNotIn('正文', xml)
+        self.assertIn('sectPr', xml)
+
 
 class SuspectTest(unittest.TestCase):
     def test_generic_words_before_suffix_are_not_names(self):

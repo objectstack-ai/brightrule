@@ -6,6 +6,7 @@
 
 每次运行写入 <output>/<年月日-小时>/：
     脱敏文件/            脱敏后的 .docx 与同名 .md，目录结构与输入一致 —— 只有这一目录可以外发
+                         有附件的文件另有「<文件名>-附件/」，每个附件一个 .docx 和 .md
     内部留存-勿外发/      原件md/（原件的 .md）、对照表.csv、替换汇总.csv、报告.md —— 含原文，必须留在内部
 
 词典与规则的写法见 DICTIONARY.md。兼容 macOS 自带的 Python 3.9+，只依赖 lxml。
@@ -31,7 +32,7 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 from lxml import etree
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from docx2md import docx_to_markdown  # noqa: E402
+from docx2md import attachment_docx, document_markdown, split_document  # noqa: E402
 
 # ── Word XML 命名空间 ──────────────────────────────────────────────────────
 W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
@@ -242,6 +243,7 @@ class FileResult:
     media: List[str] = field(default_factory=list)
     embeddings: List[str] = field(default_factory=list)
     suspects: List[str] = field(default_factory=list)
+    attachments: List[str] = field(default_factory=list)  # 拆出的附件：「附件1-标题（表格 1 个）」
     leaks: List[str] = field(default_factory=list)
     error: Optional[str] = None
 
@@ -449,7 +451,12 @@ def suspects_in(text: str, replacements: Iterable[str]) -> List[str]:
     return out
 
 
-def process_docx(src: Path, dst: Path, red: Redactor, orig_md: Optional[Path] = None) -> FileResult:
+def attachment_dir(path: Path) -> Path:
+    return path.parent / f'{path.stem}-附件'
+
+
+def process_docx(src: Path, dst: Path, red: Redactor, orig_md: Optional[Path] = None,
+                 split: bool = True) -> FileResult:
     result = FileResult(source=src)
     with zipfile.ZipFile(src) as zin:
         infos = zin.infolist()
@@ -512,12 +519,15 @@ def process_docx(src: Path, dst: Path, red: Redactor, orig_md: Optional[Path] = 
                     if s not in result.suspects:
                         result.suspects.append(s)
 
-    # Markdown：原件一份（内部留存），脱敏后一份（与 .docx 同名、同目录）
+    # Markdown：原件一份（内部留存），脱敏后一份（与 .docx 同名、同目录）；附件各自单独成文件
     texts = all_text(out)
-    md_out = None
+    md_out, att_md = None, []
     if orig_md is not None:
-        md_out = docx_to_markdown(out)
+        md_out, att_md = document_markdown(out, split)
         texts[dst.with_suffix('.md').name] = md_out
+        texts.update((f'{a.name}.md', md) for a, md in att_md)
+    attachments = split_document(_parse(out['word/document.xml']))[1] if split and 'word/document.xml' in out else []
+    result.attachments = [f'{a.name}（表格 {a.tables} 个）' for a in attachments]
 
     # 泄漏复查：输出文件里不得再出现任何词典原文或规则命中
     for name, text in texts.items():
@@ -538,10 +548,22 @@ def process_docx(src: Path, dst: Path, red: Redactor, orig_md: Optional[Path] = 
                 level = 1 if not info.filename.endswith(('.xml', '.rels')) else None
                 zout.writestr(info, out[info.filename], compress_type=info.compress_type, compresslevel=level)
     result.output = dst
+    if attachments:
+        adir = attachment_dir(dst)
+        adir.mkdir(parents=True, exist_ok=True)
+        for a in attachments:
+            (adir / f'{a.name}.docx').write_bytes(attachment_docx(out, a))
     if orig_md is not None and md_out is not None:
         dst.with_suffix('.md').write_text(md_out, encoding='utf-8')
+        for a, md in att_md:
+            (attachment_dir(dst) / f'{a.name}.md').write_text(md, encoding='utf-8')
         orig_md.parent.mkdir(parents=True, exist_ok=True)
-        orig_md.write_text(docx_to_markdown(parts), encoding='utf-8')
+        orig_main, orig_att = document_markdown(parts, split)
+        orig_md.write_text(orig_main, encoding='utf-8')
+        if orig_att:
+            attachment_dir(orig_md).mkdir(parents=True, exist_ok=True)
+            for a, md in orig_att:
+                (attachment_dir(orig_md) / f'{a.name}.md').write_text(md, encoding='utf-8')
     return result
 
 
@@ -563,15 +585,18 @@ def sha256(path: Path) -> str:
 _RED: Optional['Redactor'] = None
 
 
-def _init_worker(red: 'Redactor') -> None:
-    global _RED
-    _RED = red
+_SPLIT = True
+
+
+def _init_worker(red: 'Redactor', split: bool = True) -> None:
+    global _RED, _SPLIT
+    _RED, _SPLIT = red, split
 
 
 def _worker(src: Path, dst: Path, orig_md: Optional[Path] = None) -> FileResult:
     before = sha256(src)
     try:
-        res = process_docx(src, dst, _RED, orig_md)
+        res = process_docx(src, dst, _RED, orig_md, _SPLIT)
     except (zipfile.BadZipFile, etree.XMLSyntaxError, KeyError, ValueError) as e:
         res = FileResult(source=src, error=f'{type(e).__name__}: {e}')
     if sha256(src) != before:  # 源文件只读的保证
@@ -596,6 +621,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument('--jobs', type=int, default=os.cpu_count() or 1,
                     help='同时处理的文件数，默认等于 CPU 核数；设为 1 则逐个处理')
     ap.add_argument('--no-md', action='store_true', help='不生成 Markdown（默认生成原件与脱敏后各一份 .md）')
+    ap.add_argument('--no-split', action='store_true', help='不拆分附件（默认每个附件另存一个 .docx 和 .md）')
     args = ap.parse_args(argv)
 
     if not args.input.is_dir():
@@ -629,13 +655,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     started = time.monotonic()
     results: List[FileResult] = []
     if args.jobs > 1 and len(jobs) > 1:
-        with ProcessPoolExecutor(max_workers=args.jobs, initializer=_init_worker, initargs=(red,)) as pool:
+        with ProcessPoolExecutor(max_workers=args.jobs, initializer=_init_worker, initargs=(red, not args.no_split)) as pool:
             futures = [pool.submit(_worker, *job) for job in jobs]
             for n, fut in enumerate(as_completed(futures), start=1):
                 results.append(fut.result())
                 _progress(n, len(jobs), started)
     else:
-        _init_worker(red)
+        _init_worker(red, not args.no_split)
         for n, job in enumerate(jobs, start=1):
             results.append(_worker(*job))
             _progress(n, len(jobs), started)
@@ -648,6 +674,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     write_report(internal / '报告.md', results, skipped, args, out_root, now, len(terms), len(patterns), summary)
 
     failed = [r for r in results if r.error or r.leaks]
+    n_att = sum(len(r.attachments) for r in results)
     dict_rows = [s for s in summary if s.source == '词典']
     dict_hits = sum(s.count for s in dict_rows)
     rule_hits = sum(s.count for s in summary if s.source == '规则')
@@ -655,6 +682,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print(f'处理 {len(results)} 个 .docx（{elapsed:.1f} 秒），跳过 {len(skipped)} 个其他文件，{len(failed)} 个需处理。')
     print(f'共替换 {dict_hits + rule_hits} 处：词典 {dict_hits} 处（{len(dict_rows) - len(unused)}/{len(dict_rows)} 个词条命中），'
           f'格式规则 {rule_hits} 处。' + (f'{len(unused)} 个词条未命中，见报告。' if unused else ''))
+    if n_att:
+        print(f'拆出附件 {n_att} 个（{sum(1 for r in results if r.attachments)} 个文件有附件），在各文件旁的「…-附件」文件夹里。')
     print(f'脱敏文件：{docs_dir}' + ('' if args.no_md else '（.docx 与同名 .md）'))
     if not args.no_md:
         print(f'原件 Markdown：{internal / "原件md"}')
@@ -760,6 +789,9 @@ def write_report(path: Path, results: List[FileResult], skipped: List[Path], arg
             lines += [f'  - {x}' for x in r.leaks]
         if r.media or r.embeddings:
             lines.append(f'- **需人工检查**：图片 {len(r.media)} 个、嵌入对象 {len(r.embeddings)} 个（工具不处理图片和嵌入文件里的文字）')
+        if r.attachments:
+            lines.append(f'- 拆出附件 {len(r.attachments)} 个（在「{Path(r.output.stem + "-附件") if r.output else ""}」）：'
+                         + '、'.join(r.attachments))
         if r.suspects:
             lines.append('- **疑似遗漏**（像机构名但不在词典里，确认后加入词典重跑）：' + '、'.join(r.suspects[:30]))
         lines.append('')

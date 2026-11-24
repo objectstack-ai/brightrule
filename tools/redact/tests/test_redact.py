@@ -383,6 +383,28 @@ class DataPartTest(unittest.TestCase):
         self.assertEqual(len(res.hits), 2)                              # 图表 1 处 + 正文 1 处，副本不计
 
 
+class SpacedNameTest(unittest.TestCase):
+    def test_scan_finds_names_after_role_words_even_when_spaced(self):
+        import scan
+        cases = {'签发人：张三丰': '张三丰', '签发人：张 三 丰': '张三丰', '签发人: 张  三': '张三',
+                 '签发人：\u3000\u3000乜\u3000\u3000强': '乜强', '签发人：亓玉林\u3000\u3000 抄送：': '亓玉林',
+                 '经办人：王 某 某（签字）': '王某某', '联系人：张三电话138': '张三',
+                 '签发人:张  三': '张三', '签发人 : 张\u00a0\u00a0三': '张三', '签 发 人: 张  三': '张三',
+                 '签发人: 张  三      2025年1月9日': '张三', '签发人: 张  三  抄 送：各部门': '张三'}
+        for text, name in cases.items():
+            self.assertEqual([n for n, _w in scan.person_names(text)], [name], text)
+        for text in ('签发人：***', '签发人：见附件', '部门负责人审批'):
+            self.assertEqual(scan.person_names(text), [], text)
+
+    def test_redaction_ignores_layout_spaces_between_chinese_characters(self):
+        red = redact.Redactor([redact.Term('人名', '张三丰', '人员A'), redact.Term('集团', 'B市C集团', '甲集团')], [])
+        self.assertEqual(red.redact_string('签发人：张 三 丰')[0], '签发人：人员A')
+        self.assertEqual(red.redact_string('签发人：张\u3000\u3000三\u3000\u3000丰。')[0], '签发人：人员A。')
+        self.assertEqual(red.redact_string('B 市 C 集团')[0], '甲集团')
+        self.assertEqual([t.original for t in red.leaked_terms('落款：张 三 丰')], ['张三丰'])
+        self.assertEqual(red.redact_string('张三 丰收')[1][0].term, '张三丰')   # 命中记到词典原文上
+
+
 class ScanTest(unittest.TestCase):
     def test_scan_proposes_a_usable_dictionary(self):
         import scan
@@ -390,11 +412,13 @@ class ScanTest(unittest.TestCase):
         try:
             src = tmp / '原件'
             src.mkdir()
-            body = ''.join(f'<w:p><w:r><w:t>{t}</w:t></w:r></w:p>' for t in (
+            cells = ('<w:tbl><w:tr><w:tc><w:p><w:r><w:t>经办人</w:t></w:r></w:p></w:tc>'
+                     '<w:tc><w:p><w:r><w:t xml:space="preserve">赵 六</w:t></w:r></w:p></w:tc></w:tr></w:tbl>')
+            body = cells + ''.join(f'<w:p><w:r><w:t xml:space="preserve">{t}</w:t></w:r></w:p>' for t in (
                 '关于印发《C集团差旅费管理办法》的通知', 'BCB字﹝2025﹞3号',
                 '各下属企业：经C集团研究，切实加强集团管理，请结合集团实际执行。',
                 '制度编码：C集-JY-ZHB-03-07-01', '一类地区指北京、上海；三类地区指A省内城市（不含D市）。',
-                '参照B市财办﹝2021﹞36号执行，联系人：张建国，电话 13812345678。',
+                '参照B市财办﹝2021﹞36号执行，联系人：张建国，电话 13812345678。', '签发人：亓 玉 林',
                 '由王小明总经理签发，提高总经理办公会效率。', '办公地址：B市示例区建设路18号3楼。',
                 '审批请登录华示OA系统，详见 https://oa.cgroup-demo.com/x 。',
                 'B市C集团有限责任公司综合办公室  2025年1月9日印发'))
@@ -414,7 +438,7 @@ class ScanTest(unittest.TestCase):
             for name in ('B市C集团有限责任公司', 'B市C集团', 'C集团'):
                 self.assertIn(name, active)
             self.assertEqual({rows[n]['替换为'] for n in ('B市C集团有限责任公司', 'B市C集团', 'C集团')}, {rows['C集团']['替换为']})
-            for name in ('B市', 'A省', 'D市', 'BCB字', 'C集-JY-ZHB-03-07-01', '张建国', '王小明', '王某某', 'cgroup-demo.com'):
+            for name in ('B市', 'A省', 'D市', 'BCB字', '亓玉林', '赵六', 'C集-JY-ZHB-03-07-01', '张建国', '王小明', '王某某', 'cgroup-demo.com'):
                 self.assertIn(name, active, name)
             self.assertTrue(any('建设路18号' in k for k in active))
             self.assertIn('华东示例控股集团有限公司', active)      # Word 属性里的单位

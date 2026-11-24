@@ -11,14 +11,14 @@ const VERSIONS: Row[] = [
 ];
 
 /** Run the hook on a payload (and, for an update, the stored row); return the payload it leaves. */
-async function save(data: Row, previous?: Row): Promise<Row> {
+async function save(data: Row, previous?: Row, flat = false): Promise<Row> {
   const api = {
     object: (name: string) => ({
       findOne: async ({ where }: { where: { id: string } }) =>
         name === 'brightrule_policy_version' ? (VERSIONS.find((v) => v.id === where.id) ?? null) : null,
     }),
   };
-  const ctx = { input: { data }, previous, api } as unknown as HookContext;
+  const ctx = { input: flat ? data : { data }, previous, api } as unknown as HookContext;
   const handler = ClauseCurrentHook.handler as unknown as (c: HookContext) => Promise<void>;
   await handler(ctx);
   return data;
@@ -65,6 +65,12 @@ describe('a clause keeps its policy and version in step', () => {
 
   it('refuses moving the policy alone away from the version', async () => {
     expect(await refusal({ policy: 'pB' }, { policy: 'pA', policy_version: 'vA3' })).toBe(CLAUSE_POLICY_MISMATCH);
+  });
+
+  it('reads the payload as a lowered body receives it (ctx.input is the payload)', async () => {
+    const d = await save({ title: 't', policy_version: 'vB1' }, undefined, true);
+    expect(d.policy).toBe('pB');
+    expect(d.is_current).toBe(true);
   });
 
   it('leaves an update that touches neither parent alone', async () => {

@@ -1,16 +1,23 @@
 import { defineHook, type HookContext } from '@objectstack/spec/data';
-import { composeAnswer, MIN_ANSWER_SCORE_BY_ADAPTER, type ClauseCandidate } from './answer.js';
+import { composeReferenceAnswer, MIN_ANSWER_SCORE_BY_ADAPTER, type ClauseCandidate } from './answer.js';
+import { judgeAnswer, JUDGE_TOP_K } from './judge.js';
 import { POLICY_CLAUSE_SOURCE_ID, policyQaAdapter } from './knowledge-source.js';
-import { getPolicyKnowledge } from './policy-qa-plugin.js';
+import { getPolicyAI, getPolicyKnowledge } from './policy-qa-plugin.js';
 
 /** Candidates retrieved per question, before the current / readable cut. */
-const RETRIEVE_TOP_K = 10;
+const RETRIEVE_TOP_K = 12;
 
 /**
  * Answer a new inquiry from the current clauses its asker may read.
  *
  * Runs on `beforeInsert`, so the answer is part of the saved row: the asker
- * sees it the moment the record opens, and no second write is needed.
+ * sees it the moment the record opens, and no second write is needed. The save
+ * waits for the model (`JUDGE_TIMEOUT_MS` at most).
+ *
+ * Retrieval ranks the clauses; the platform's AI service reads the top
+ * `JUDGE_TOP_K` the asker may see and decides the answer, citing only those
+ * (`judge.ts`). Without a usable model reply the clauses are listed as
+ * references and the question goes to a person (`composeReferenceAnswer`).
  *
  * Two cuts happen after retrieval, both through `ctx.api` — the data API bound
  * to the asker's own context:
@@ -70,5 +77,8 @@ export async function answerQuestion(ctx: HookContext): Promise<void> {
     score: scoreById.get(String(row.id)) ?? 0,
   }));
 
-  Object.assign(data, composeAnswer(candidates, MIN_ANSWER_SCORE_BY_ADAPTER[policyQaAdapter()]));
+  candidates.sort((a, b) => b.score - a.score);
+  const ai = getPolicyAI();
+  const judged = ai ? await judgeAnswer(ai, question, candidates.slice(0, JUDGE_TOP_K)) : null;
+  Object.assign(data, judged ?? composeReferenceAnswer(candidates, MIN_ANSWER_SCORE_BY_ADAPTER[policyQaAdapter()]));
 }

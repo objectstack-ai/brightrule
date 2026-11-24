@@ -83,6 +83,13 @@ SUSPECT_LEAD = re.compile(
     r'.*(?:按照|根据|依据|参照|参加|参与|经过|通过|对于|关于|以及|已经|严格|所属|下属|直属|办法|规定|制度|'
     r'申请单|部门|员工|人员|单位|全体|报送|上报|报|按|经|由|向|对|在|从|与|和|及|或|的|为|是|给|至|各|本|该|此|其|非|全|总|我|贵)'
 )
+# 机构名前面常连着的动词、副词等（「切实加强集团」「进一步规范集团」）
+EXTRA_LEAD = re.compile(
+    r'.*(?:如|若|即|系|属|指|含|包括|例如|比如|其中|以及|同时|分别|不得|应当|应|须|可|并|且|向|及|'
+    r'加强|履行|形成|结合|规范|使用|落实|执行|遵守|维护|代表|损害|制定|实际|管理|服务|支持|建立|完善|推进|提升|保障|实现|'
+    r'开展|组织|参照|适用|涉及|视为|作为|成为|属于|设立|成立|委托|授权|聘请|选择|具有|采购|提供|产生|发生|承担|实施|促进|推动|'
+    r'进一步|切实|严格|认真|贯彻|坚持|加快|深化|强化|优化|统筹|协调|配合|联合|下发|印发|转发|发布|颁布|出台|修订|废止|'
+    r'原则|统一|共同|全面|有效|合理|必须|需要|能够|以上|以下|之间|之内|期间|委|党)')
 GENERIC_ORG = re.compile(r'^(股份有限公司|有限责任公司|有限公司|分公司|子公司|集团|银行|研究院|事务所|律师所)$')
 TIANGAN = '甲乙丙丁戊己庚辛壬癸'
 
@@ -441,9 +448,10 @@ def suspects_in(text: str, replacements: Iterable[str]) -> List[str]:
     out: List[str] = []
     for m in SUSPECT_ORG.finditer(text):
         s = m.group(0)
-        lead = SUSPECT_LEAD.match(s[:-1])  # 至少留下后缀的第一个字之前的部分来判断
-        if lead:
-            s = s[lead.end():]
+        for rx in (SUSPECT_LEAD, EXTRA_LEAD):
+            lead = rx.match(s[:-1])  # 至少留下后缀的第一个字之前的部分来判断
+            if lead:
+                s = s[lead.end():]
         if not s or GENERIC_ORG.match(s) or any(r and r in s for r in replacements):
             continue
         if s not in out:

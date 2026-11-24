@@ -383,5 +383,51 @@ class DataPartTest(unittest.TestCase):
         self.assertEqual(len(res.hits), 2)                              # 图表 1 处 + 正文 1 处，副本不计
 
 
+class ScanTest(unittest.TestCase):
+    def test_scan_proposes_a_usable_dictionary(self):
+        import scan
+        tmp = Path(tempfile.mkdtemp())
+        try:
+            src = tmp / '原件'
+            src.mkdir()
+            body = ''.join(f'<w:p><w:r><w:t>{t}</w:t></w:r></w:p>' for t in (
+                '关于印发《C集团差旅费管理办法》的通知', 'BCB字﹝2025﹞3号',
+                '各下属企业：经C集团研究，切实加强集团管理，请结合集团实际执行。',
+                '制度编码：C集-JY-ZHB-03-07-01', '一类地区指北京、上海；三类地区指A省内城市（不含D市）。',
+                '参照B市财办﹝2021﹞36号执行，联系人：张建国，电话 13812345678。',
+                '由王小明总经理签发，提高总经理办公会效率。', '办公地址：B市示例区建设路18号3楼。',
+                '审批请登录华示OA系统，详见 https://oa.cgroup-demo.com/x 。',
+                'B市C集团有限责任公司综合办公室  2025年1月9日印发'))
+            doc = f'<w:document {W}><w:body>{body}</w:body></w:document>'
+            parts = dict(PARTS, **{'word/document.xml': doc, 'word/comments.xml': COMMENTS})
+            with zipfile.ZipFile(src / 'C集团差旅费管理办法.docx', 'w') as z:
+                for name, text in parts.items():
+                    z.writestr(name, text)
+            out = tmp / '结果'
+            self.assertEqual(scan.main(['--input', str(src), '--output', str(out)]), 0)
+            run = next(out.iterdir())
+            self.assertTrue(run.name.endswith('-扫描'))
+            with (run / '候选词典.csv').open(encoding='utf-8-sig') as f:
+                rows = {r['原文']: r for r in csv.DictReader(f) if r['原文']}
+            active = {k for k, r in rows.items() if not r['类别'].startswith('#')}
+            # 全称、简称同组同替换值
+            for name in ('B市C集团有限责任公司', 'B市C集团', 'C集团'):
+                self.assertIn(name, active)
+            self.assertEqual({rows[n]['替换为'] for n in ('B市C集团有限责任公司', 'B市C集团', 'C集团')}, {rows['C集团']['替换为']})
+            for name in ('B市', 'A省', 'D市', 'BCB字', 'C集-JY-ZHB-03-07-01', '张建国', '王小明', '王某某', 'cgroup-demo.com'):
+                self.assertIn(name, active, name)
+            self.assertTrue(any('建设路18号' in k for k in active))
+            self.assertIn('华东示例控股集团有限公司', active)      # Word 属性里的单位
+            self.assertIn('北京', rows)
+            self.assertNotIn('北京', active)                       # 常见省市名默认不启用
+            for noise in ('切实加强集团', '结合集团', '一类地区', '三类地区', '提高', '高总', '财办', '13812345678'):
+                self.assertFalse(any(noise == k for k in active), noise)
+            # 候选词典可以直接给脱敏用
+            terms = redact.load_dictionary(run / '候选词典.csv')
+            self.assertTrue(terms)
+        finally:
+            shutil.rmtree(tmp)
+
+
 if __name__ == '__main__':
     unittest.main()

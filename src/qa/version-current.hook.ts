@@ -59,18 +59,8 @@ export const VersionCurrentHook = defineHook({
   },
 });
 
-/** A reference field's id, whether the payload holds the id or the record. */
-function refId(value: unknown): string | undefined {
-  if (value && typeof value === 'object') return refId((value as Row).id);
-  return typeof value === 'string' && value !== '' ? value : undefined;
-}
-
 export const CLAUSE_POLICY_MISMATCH = 'CLAUSE_POLICY_MISMATCH';
 export const CLAUSE_VERSION_NOT_FOUND = 'CLAUSE_VERSION_NOT_FOUND';
-
-function refuse(code: string): never {
-  throw Object.assign(new Error(code), { code });
-}
 
 /**
  * Keep a clause's two parents in step, and its currency with its version.
@@ -87,6 +77,9 @@ function refuse(code: string): never {
  * - A clause added to, or moved to, the current version is current from that
  *   save, so a maintainer splitting a published policy into clauses never has
  *   to tick the flag by hand.
+ *
+ * The handler names nothing outside itself (its helpers and refusal codes are
+ * written inline), so `os build` lowers it to a metadata-only body.
  */
 export const ClauseCurrentHook = defineHook({
   name: 'brightrule_clause_current',
@@ -103,9 +96,20 @@ export const ClauseCurrentHook = defineHook({
     },
   },
   handler: async (ctx: HookContext) => {
-    const data = (ctx.input as { data?: Row }).data;
+    // The write payload: `ctx.input` itself in a lowered body, `ctx.input.data`
+    // for a bundled handler. A clause has no field named `data`.
+    const input = ctx.input as Record<string, unknown> | undefined;
+    const nested = input?.data;
+    const data = (nested && typeof nested === 'object' && !Array.isArray(nested) ? nested : input) as
+      | Record<string, unknown>
+      | undefined;
     if (!data || !ctx.api) return;
-    const previous = ctx.previous as Row | undefined;
+    const previous = ctx.previous as Record<string, unknown> | undefined;
+    // A reference field's id, whether the payload holds the id or the record.
+    const refId = (value: unknown): string | undefined => {
+      const v = value && typeof value === 'object' ? (value as { id?: unknown }).id : value;
+      return typeof v === 'string' && v !== '' ? v : undefined;
+    };
     const versionChanged = 'policy_version' in data;
     const policyChanged = 'policy' in data;
     // An update that touches neither parent (is_current, text, …) has nothing to check.
@@ -115,14 +119,16 @@ export const ClauseCurrentHook = defineHook({
     if (!versionId) return; // the field's own required check answers a missing version
     const version = (await ctx.api.object('brightrule_policy_version').findOne({
       where: { id: versionId },
-    })) as Row | null;
-    if (!version) refuse(CLAUSE_VERSION_NOT_FOUND);
+    })) as Record<string, unknown> | null;
+    if (!version) throw Object.assign(new Error('CLAUSE_VERSION_NOT_FOUND'), { code: 'CLAUSE_VERSION_NOT_FOUND' });
     const versionPolicy = refId(version.policy);
 
     // The policy this save asks for: the payload's, else (version unchanged) the stored one.
     const askedPolicy = refId(policyChanged ? data.policy : versionChanged ? undefined : previous?.policy);
     if (askedPolicy === undefined) data.policy = versionPolicy;
-    else if (askedPolicy !== versionPolicy) refuse(CLAUSE_POLICY_MISMATCH);
+    else if (askedPolicy !== versionPolicy) {
+      throw Object.assign(new Error('CLAUSE_POLICY_MISMATCH'), { code: 'CLAUSE_POLICY_MISMATCH' });
+    }
 
     if (!previous || versionChanged) data.is_current = version.version_status === 'current';
   },

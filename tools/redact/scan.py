@@ -19,6 +19,7 @@ import csv
 import datetime as _dt
 import re
 import sys
+import tempfile
 import zipfile
 from collections import OrderedDict, defaultdict
 from dataclasses import dataclass, field
@@ -26,8 +27,8 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from redact import (CP, DC, EP, EXTRA_LEAD, MC, REL, SUSPECT_LEAD, TEXT_PARTS, WP, _nearest, _parse,  # noqa: E402
-                    accept_revisions, load_dictionary, run_dir, w)
+from redact import (CONVERTIBLE, CP, DC, EP, EXTRA_LEAD, convert_to_docx, MC, REL, SUSPECT_LEAD, TEXT_PARTS, WP, _nearest, _parse,  # noqa: E402
+                    accept_revisions, load_dictionary, w)
 
 TIANGAN = '甲乙丙丁戊己庚辛壬癸'
 
@@ -432,6 +433,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument('--input', required=True, type=Path, help='原件目录（只读，含子目录）')
     ap.add_argument('--dict', type=Path, help='已有词典：里面已有的原文不再列出')
     ap.add_argument('--output', type=Path, default=Path('脱敏结果'), help='结果根目录，默认 ./脱敏结果')
+    ap.add_argument('--convert-doc', action='store_true', help='.doc / .rtf / .wps 等先临时转成 .docx 再扫描（转换结果用完即删）')
     args = ap.parse_args(argv)
     if not args.input.is_dir():
         raise SystemExit(f'原件目录不存在：{args.input}')
@@ -441,14 +443,29 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         for t in load_dictionary(args.dict):
             known += [t.original, t.replacement]
     scan = Scan(known)
-    files = sorted(p for p in args.input.rglob('*.docx') if not p.name.startswith(('~$', '.')))
+    everything = sorted(p for p in args.input.rglob('*') if p.is_file() and not p.name.startswith(('~$', '.')))
+    files = [p for p in everything if p.suffix.lower() == '.docx']
+    old = [p for p in everything if p.suffix.lower() in CONVERTIBLE]
     failed = []
-    for path in files:
-        rel = str(path.relative_to(args.input))
+    tmp = tempfile.TemporaryDirectory()
+    targets: List[Tuple[Path, str]] = [(p, str(p.relative_to(args.input))) for p in files]
+    if old and args.convert_doc:
+        print(f'先把 {len(old)} 个旧格式文件临时转成 .docx……', flush=True)
+        for p in old:
+            dst = Path(tmp.name) / p.relative_to(args.input).with_suffix('.docx')
+            how, why = convert_to_docx(p, dst)
+            if how:
+                targets.append((dst, str(p.relative_to(args.input))))
+            else:
+                failed.append(f'{p.relative_to(args.input)}：转换失败，{why}')
+    for path, rel in targets:
         try:
             paras, people, orgs = paragraphs_of(path)
-        except (zipfile.BadZipFile, KeyError, ValueError) as e:
-            failed.append(f'{rel}：{e}')
+        except zipfile.BadZipFile:
+            failed.append(f'{rel}：不是有效的 .docx（可能是改了扩展名的 .doc，或文件已损坏）')
+            continue
+        except Exception as e:  # 一个文件出错不影响其他文件
+            failed.append(f'{rel}：读取失败（{type(e).__name__}）')
             continue
         for person in people:
             if person.strip() and person.strip().lower() not in GENERIC_AUTHORS:
@@ -459,17 +476,26 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             scan.scan_paragraph(rel, name_part)
         for para in paras:
             scan.scan_paragraph(rel, para)
+    tmp.cleanup()
     cands = scan.finish()
 
-    out_root = run_dir(args.output, _dt.datetime.now())
-    out_root = out_root.with_name(out_root.name + '-扫描')
+    stamp = _dt.datetime.now().strftime('%Y%m%d-%H') + '-扫描'
+    out_root, n = args.output / stamp, 2
+    while out_root.exists():  # 同一小时再扫一次：…-扫描-2
+        out_root, n = args.output / f'{stamp}-{n}', n + 1
     out_root.mkdir(parents=True)
     write_dictionary(out_root / '候选词典.csv', cands)
-    write_report(out_root / '扫描报告.md', cands, files, failed, args)
+    write_report(out_root / '扫描报告.md', cands, [p for p, _r in targets], failed, args)
     by_conf = defaultdict(int)
     for c in cands:
         by_conf[c.confidence] += 1
-    print(f'扫描 {len(files)} 个 .docx，找到 {len(cands)} 个候选：置信度高 {by_conf["高"]}、中 {by_conf["中"]}、低 {by_conf["低"]}（低的默认注释掉）。')
+    if old and not args.convert_doc:
+        print(f'注意：有 {len(old)} 个 .doc / .rtf / .wps 等旧格式文件没有扫描。加 --convert-doc 一起扫描：')
+        for p in old[:10]:
+            print(f'  {p.relative_to(args.input)}')
+    for f in failed:
+        print(f'没扫到：{f}')
+    print(f'扫描 {len(targets)} 个文件，找到 {len(cands)} 个候选：置信度高 {by_conf["高"]}、中 {by_conf["中"]}、低 {by_conf["低"]}（低的默认注释掉）。')
     print(f'候选词典：{out_root / "候选词典.csv"}')
     print(f'扫描报告：{out_root / "扫描报告.md"}')
     return 0

@@ -405,6 +405,29 @@ class SpacedNameTest(unittest.TestCase):
         self.assertEqual(red.redact_string('张三 丰收')[1][0].term, '张三丰')   # 命中记到词典原文上
 
 
+class RobustnessTest(unittest.TestCase):
+    def test_bad_file_and_old_format_do_not_stop_the_batch(self):
+        tmp = Path(tempfile.mkdtemp())
+        try:
+            src = tmp / '原件'
+            (src / '子目录').mkdir(parents=True)
+            make_docx(src / '好文件.docx')
+            make_docx(src / '子目录' / '扩展名写错.doc')          # 其实是 .docx
+            (src / '坏文件.docx').write_bytes(b'not a zip')
+            out = tmp / '结果'
+            dict_ = HERE.parent / '词典示例.csv'
+            code = redact.main(['--input', str(src), '--dict', str(dict_), '--output', str(out), '--convert-doc'])
+            self.assertEqual(code, 1)                                # 坏文件要处理
+            docs = sorted(p.relative_to(next(out.iterdir()) / '脱敏文件').as_posix()
+                          for p in (next(out.iterdir()) / '脱敏文件').rglob('*.docx'))
+            self.assertEqual(set(docs), {'子目录/扩展名写错.docx', '好文件.docx'})
+            report = (next(out.iterdir()) / '内部留存-勿外发' / '报告.md').read_text(encoding='utf-8')
+            self.assertIn('不是有效的 .docx', report)
+            self.assertIn('自动转换（扩展名更正）', report)
+        finally:
+            shutil.rmtree(tmp)
+
+
 class ScanTest(unittest.TestCase):
     def test_scan_proposes_a_usable_dictionary(self):
         import scan
@@ -446,6 +469,8 @@ class ScanTest(unittest.TestCase):
             self.assertNotIn('北京', active)                       # 常见省市名默认不启用
             for noise in ('切实加强集团', '结合集团', '一类地区', '三类地区', '提高', '高总', '财办', '13812345678'):
                 self.assertFalse(any(noise == k for k in active), noise)
+            self.assertEqual(scan.main(['--input', str(src), '--output', str(out)]), 0)   # 同一小时再扫一次
+            self.assertTrue(any(d.name.endswith('-扫描-2') for d in out.iterdir()))
             # 候选词典可以直接给脱敏用
             terms = redact.load_dictionary(run / '候选词典.csv')
             self.assertTrue(terms)

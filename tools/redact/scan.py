@@ -81,7 +81,9 @@ TITLE_WORDS = ('同志|先生|女士|董事长|副董事长|总经理|副总经�
 # 角色词后面：不要求常见姓氏（「亓」「乜」这类姓也能找到）；字间可带排版空格（「张 三 丰」）
 SP = r'[ \t\u3000\u00a0]'
 ROLE_RX = re.compile(r'^(?:' + ROLE_WORDS + r')\s*[:：]?$')
-NAME_AFTER_ROLE = re.compile(r'(?:' + ROLE_WORDS + r')' + SP + r'*[:：]' + SP + r'*((?:[一-龥]' + SP + r'{0,4}){1,3}?[一-龥])(?=' + SP + r'*(?:$|[^一-龥 \t\u3000\u00a0]|(?:' + ROLE_WORDS + r'|印发|日期|电话|手机)))')
+# 角色词本身也可能被排版空格隔开（「签 发 人：」）
+ROLE_SPACED = '|'.join((SP + '*').join(word) for word in ROLE_WORDS.split('|'))
+NAME_AFTER_ROLE = re.compile(r'(?:' + ROLE_SPACED + r')' + SP + r'*[:：]' + SP + r'*((?:[一-龥]' + SP + r'{0,4}){1,3}?[一-龥])(?=' + SP + r'*(?:$|[^一-龥 \t\u3000\u00a0]|(?:' + ROLE_SPACED + r'|印发|日期|电话|手机)))')
 NOT_A_NAME = re.compile(r'^(?:无|略|空|同上|见附件|待定|本人|另附|附后|签字|盖章|签名|领导|主任|部门|单位|本单位|各部门|各单位)$')
 NAME_BEFORE_TITLE = re.compile(r'(' + SURNAME_RX + r'[一-龥]{1,2}?)(?:' + TITLE_WORDS + r')')
 NAME_BAD_CHAR = set('的了和与及或在是为对由从向给按将把被以于等其该各本全每此这那所级内外上下中前后部门办会司处科局厅委院所组室队站总副正'

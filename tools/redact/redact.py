@@ -2,11 +2,11 @@
 """制度文档脱敏工具 — 直接修改 Word（.docx），输出新的 .docx，源文件只读。
 
 用法：
-    python3 redact.py --input 原件目录 --dict 词典.csv [--patterns patterns.csv] [--output 脱敏结果]
+    python3 redact.py --input 原件目录 --dict 词典.csv [--patterns patterns.csv] [--output 脱敏结果] [--no-md]
 
 每次运行写入 <output>/<年月日-小时>/：
-    脱敏文件/            脱敏后的 .docx，目录结构与输入一致 —— 只有这一目录可以外发
-    内部留存-勿外发/      对照表.csv（原文 ↔ 替换值）与 报告.md —— 含原文，必须留在内部
+    脱敏文件/            脱敏后的 .docx 与同名 .md，目录结构与输入一致 —— 只有这一目录可以外发
+    内部留存-勿外发/      原件md/（原件的 .md）、对照表.csv、替换汇总.csv、报告.md —— 含原文，必须留在内部
 
 词典与规则的写法见 DICTIONARY.md。兼容 macOS 自带的 Python 3.9+，只依赖 lxml。
 """
@@ -30,9 +30,14 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from lxml import etree
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from docx2md import docx_to_markdown  # noqa: E402
+
 # ── Word XML 命名空间 ──────────────────────────────────────────────────────
 W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
 WP = 'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing'
+MC = 'http://schemas.openxmlformats.org/markup-compatibility/2006'
+V = 'urn:schemas-microsoft-com:vml'
 REL = 'http://schemas.openxmlformats.org/package/2006/relationships'
 CT = 'http://schemas.openxmlformats.org/package/2006/content-types'
 CP = 'http://schemas.openxmlformats.org/package/2006/metadata/core-properties'
@@ -46,7 +51,14 @@ def w(tag: str) -> str:
 
 
 # 正文类部件：逐段替换文字
-TEXT_PARTS = re.compile(r'^word/(document|header\d*|footer\d*|footnotes|endnotes)\.xml$')
+TEXT_PARTS = re.compile(r'^word/(document|header\d*|footer\d*|footnotes|endnotes|glossary/document)\.xml$')
+# 图表、SmartArt、自定义 XML 数据：逐个文字节点替换
+DATA_PARTS = re.compile(r'^(word/(charts|diagrams)/[^/]+\.xml|customXml/item\d+\.xml)$')
+# 带文字的属性：图片说明、艺术字、VML 形状说明、简单域代码
+TEXT_ATTRS = ((f'{{{WP}}}docPr', ('descr', 'title', 'name')),
+              (f'{{{V}}}textpath', ('string',)),
+              (f'{{{V}}}shape', ('alt', 'title')),
+              (f'{{{W}}}fldSimple', (f'{{{W}}}instr',)))
 # 批注部件：整体删除
 COMMENT_PARTS = re.compile(r'^word/comments(Extended|Ids|Extensible)?\.xml$')
 # 修订：删除的内容整体移除；插入的内容保留（去掉外壳）；格式修订记录移除
@@ -60,9 +72,17 @@ REVISION_MARKERS = (
 )
 # 可能残留机构名的写法，用于“疑似遗漏”提示（只提示，不替换）
 SUSPECT_ORG = re.compile(
-    r'[一-龥A-Za-z0-9（）()]{2,20}?'
-    r'(?:股份有限公司|有限责任公司|有限公司|分公司|子公司|集团|银行|研究院|事务所|律师所)'
+    r'[一-龥A-Za-z0-9（）()]{1,20}?'
+    r'(?:集团(?:股份有限公司|有限责任公司|有限公司)?|股份有限公司|有限责任公司|有限公司|分公司|子公司|银行|研究院|事务所|律师所)'
 )
+# 机构名前面常连着的普通词：从最后一个这样的词之后才算名称。
+# 「员工外出参加非集团」→「集团」、「根据各子公司」→「子公司」，剩下的只是通用称呼，不提示；
+# 「已经C集团」→「C集团」、「B市C集团」保持不变，照常提示。
+SUSPECT_LEAD = re.compile(
+    r'.*(?:按照|根据|依据|参照|参加|参与|经过|通过|对于|关于|以及|已经|严格|所属|下属|直属|办法|规定|制度|'
+    r'申请单|部门|员工|人员|单位|全体|报送|上报|报|按|经|由|向|对|在|从|与|和|及|或|的|为|是|给|至|各|本|该|此|其|非|全|总|我|贵)'
+)
+GENERIC_ORG = re.compile(r'^(股份有限公司|有限责任公司|有限公司|分公司|子公司|集团|银行|研究院|事务所|律师所)$')
 TIANGAN = '甲乙丙丁戊己庚辛壬癸'
 
 
@@ -299,6 +319,8 @@ def redact_paragraphs(root: etree._Element, red: Redactor, part: str, result: Fi
         hits = red.find(joined)
         if not hits:
             continue
+        # 兼容旧版 Word 的副本（mc:Fallback）同样替换，但不重复计数
+        counted = _nearest(p, f'{{{MC}}}Fallback') is None
         # 每个节点在拼接文本中的起点
         starts, pos = [], 0
         for s in texts:
@@ -320,7 +342,8 @@ def redact_paragraphs(root: etree._Element, red: Redactor, part: str, result: Fi
                     new_texts[i] = cur[hi:]
                 else:
                     new_texts[i] = ''
-            result.hits.append((part, hit))
+            if counted:
+                result.hits.append((part, hit))
         for t, old, new in zip(nodes, texts, new_texts):
             if new != old:
                 t.text = new
@@ -333,12 +356,23 @@ def redact_isolated_text(root: etree._Element, red: Redactor, part: str, result:
         if el.text:
             el.text, hits = red.redact_string(el.text)
             result.hits.extend((part, h) for h in hits)
-    for el in root.iter(f'{{{WP}}}docPr'):
-        for attr in ('descr', 'title', 'name'):
-            if el.get(attr):
-                new, hits = red.redact_string(el.get(attr))
-                el.set(attr, new)
-                result.hits.extend((part, h) for h in hits)
+    for tag, attrs in TEXT_ATTRS:
+        for el in root.iter(tag):
+            counted = _nearest(el, f'{{{MC}}}Fallback') is None
+            for attr in attrs:
+                if el.get(attr):
+                    new, hits = red.redact_string(el.get(attr))
+                    el.set(attr, new)
+                    if counted:
+                        result.hits.extend((part, h) for h in hits)
+
+
+def redact_data_part(root: etree._Element, red: Redactor, part: str, result: FileResult) -> None:
+    """图表标签、SmartArt 文字、自定义 XML：每个文字节点单独替换。"""
+    for el in root.iter():
+        if isinstance(el.tag, str) and el.text and el.text.strip():
+            el.text, hits = red.redact_string(el.text)
+            result.hits.extend((part, h) for h in hits)
 
 
 def redact_core_props(root: etree._Element, red: Redactor, result: FileResult) -> None:
@@ -391,7 +425,7 @@ def all_text(data: Dict[str, bytes]) -> Dict[str, str]:
         texts = [t for t in root.itertext()]
         attrs = [rel.get('Target', '') for rel in root.iter(f'{{{REL}}}Relationship')
                  if rel.get('TargetMode') == 'External']
-        attrs += [el.get(a, '') for el in root.iter(f'{{{WP}}}docPr') for a in ('descr', 'title', 'name')]
+        attrs += [el.get(a, '') for tag, names in TEXT_ATTRS for el in root.iter(tag) for a in names]
         if TEXT_PARTS.match(name):
             # 正文按段落拼接，才能查出跨格式片段残留的原文
             paras = [''.join(t.text or '' for t in p.iter(w('t')) if _nearest(t, w('p')) is p) for p in root.iter(w('p'))]
@@ -400,7 +434,22 @@ def all_text(data: Dict[str, bytes]) -> Dict[str, str]:
     return out
 
 
-def process_docx(src: Path, dst: Path, red: Redactor) -> FileResult:
+def suspects_in(text: str, replacements: Iterable[str]) -> List[str]:
+    """形如「××有限公司」「××集团」、但不在词典里的写法。"""
+    out: List[str] = []
+    for m in SUSPECT_ORG.finditer(text):
+        s = m.group(0)
+        lead = SUSPECT_LEAD.match(s[:-1])  # 至少留下后缀的第一个字之前的部分来判断
+        if lead:
+            s = s[lead.end():]
+        if not s or GENERIC_ORG.match(s) or any(r and r in s for r in replacements):
+            continue
+        if s not in out:
+            out.append(s)
+    return out
+
+
+def process_docx(src: Path, dst: Path, red: Redactor, orig_md: Optional[Path] = None) -> FileResult:
     result = FileResult(source=src)
     with zipfile.ZipFile(src) as zin:
         infos = zin.infolist()
@@ -424,6 +473,10 @@ def process_docx(src: Path, dst: Path, red: Redactor) -> FileResult:
             strip_comment_anchors(root)
             redact_paragraphs(root, red, name, result)
             redact_isolated_text(root, red, name, result)
+            blob = _serialize(root)
+        elif DATA_PARTS.match(name):
+            root = _parse(blob)
+            redact_data_part(root, red, name, result)
             blob = _serialize(root)
         elif name == 'word/settings.xml':
             root = _parse(blob)
@@ -455,15 +508,19 @@ def process_docx(src: Path, dst: Path, red: Redactor) -> FileResult:
     for name in out:
         if TEXT_PARTS.match(name):
             for text in all_text({name: out[name]}).values():
-                for m in SUSPECT_ORG.finditer(text):
-                    s = m.group(0)
-                    if any(r and r in s for r in replacements):
-                        continue
+                for s in suspects_in(text, replacements):
                     if s not in result.suspects:
                         result.suspects.append(s)
 
+    # Markdown：原件一份（内部留存），脱敏后一份（与 .docx 同名、同目录）
+    texts = all_text(out)
+    md_out = None
+    if orig_md is not None:
+        md_out = docx_to_markdown(out)
+        texts[dst.with_suffix('.md').name] = md_out
+
     # 泄漏复查：输出文件里不得再出现任何词典原文或规则命中
-    for name, text in all_text(out).items():
+    for name, text in texts.items():
         low = text.lower()
         for t in red.terms:
             if t.original.lower() in low:
@@ -477,8 +534,14 @@ def process_docx(src: Path, dst: Path, red: Redactor) -> FileResult:
     with zipfile.ZipFile(dst, 'w') as zout:
         for info in infos:
             if info.filename in out:
-                zout.writestr(info, out[info.filename], compress_type=info.compress_type)
+                # 字体、图片等二进制部件原样保留，用最快的压缩级别（压缩率几乎一样，耗时少很多）
+                level = 1 if not info.filename.endswith(('.xml', '.rels')) else None
+                zout.writestr(info, out[info.filename], compress_type=info.compress_type, compresslevel=level)
     result.output = dst
+    if orig_md is not None and md_out is not None:
+        dst.with_suffix('.md').write_text(md_out, encoding='utf-8')
+        orig_md.parent.mkdir(parents=True, exist_ok=True)
+        orig_md.write_text(docx_to_markdown(parts), encoding='utf-8')
     return result
 
 
@@ -505,10 +568,10 @@ def _init_worker(red: 'Redactor') -> None:
     _RED = red
 
 
-def _worker(src: Path, dst: Path) -> FileResult:
+def _worker(src: Path, dst: Path, orig_md: Optional[Path] = None) -> FileResult:
     before = sha256(src)
     try:
-        res = process_docx(src, dst, _RED)
+        res = process_docx(src, dst, _RED, orig_md)
     except (zipfile.BadZipFile, etree.XMLSyntaxError, KeyError, ValueError) as e:
         res = FileResult(source=src, error=f'{type(e).__name__}: {e}')
     if sha256(src) != before:  # 源文件只读的保证
@@ -532,6 +595,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument('--output', type=Path, default=Path('脱敏结果'), help='结果根目录，默认 ./脱敏结果')
     ap.add_argument('--jobs', type=int, default=os.cpu_count() or 1,
                     help='同时处理的文件数，默认等于 CPU 核数；设为 1 则逐个处理')
+    ap.add_argument('--no-md', action='store_true', help='不生成 Markdown（默认生成原件与脱敏后各一份 .md）')
     args = ap.parse_args(argv)
 
     if not args.input.is_dir():
@@ -555,8 +619,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         rel = src.relative_to(args.input)
         new_stem, _ = red.redact_string(rel.stem)
         new_parent = Path(*[red.redact_string(part)[0] for part in rel.parent.parts]) if rel.parent.parts else Path()
-        jobs.append((src, docs_dir / new_parent / (new_stem + '.docx')))
-    clashes = [d for d, n in Counter(d for _s, d in jobs).items() if n > 1]
+        orig_md = None if args.no_md else internal / '原件md' / rel.with_suffix('.md')
+        jobs.append((src, docs_dir / new_parent / (new_stem + '.docx'), orig_md))
+    clashes = [d for d, n in Counter(d for _s, d, _m in jobs).items() if n > 1]
     if clashes:
         raise SystemExit('以下输出文件名在脱敏后重名（不同原件被替换成同一个名字），请调整词典后重试：\n'
                          + '\n'.join(f'  {c}' for c in clashes))
@@ -565,14 +630,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     results: List[FileResult] = []
     if args.jobs > 1 and len(jobs) > 1:
         with ProcessPoolExecutor(max_workers=args.jobs, initializer=_init_worker, initargs=(red,)) as pool:
-            futures = [pool.submit(_worker, src, dst) for src, dst in jobs]
+            futures = [pool.submit(_worker, *job) for job in jobs]
             for n, fut in enumerate(as_completed(futures), start=1):
                 results.append(fut.result())
                 _progress(n, len(jobs), started)
     else:
         _init_worker(red)
-        for n, (src, dst) in enumerate(jobs, start=1):
-            results.append(_worker(src, dst))
+        for n, job in enumerate(jobs, start=1):
+            results.append(_worker(*job))
             _progress(n, len(jobs), started)
     results.sort(key=lambda r: str(r.source))
     elapsed = time.monotonic() - started
@@ -590,7 +655,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print(f'处理 {len(results)} 个 .docx（{elapsed:.1f} 秒），跳过 {len(skipped)} 个其他文件，{len(failed)} 个需处理。')
     print(f'共替换 {dict_hits + rule_hits} 处：词典 {dict_hits} 处（{len(dict_rows) - len(unused)}/{len(dict_rows)} 个词条命中），'
           f'格式规则 {rule_hits} 处。' + (f'{len(unused)} 个词条未命中，见报告。' if unused else ''))
-    print(f'脱敏文件：{docs_dir}')
+    print(f'脱敏文件：{docs_dir}' + ('' if args.no_md else '（.docx 与同名 .md）'))
+    if not args.no_md:
+        print(f'原件 Markdown：{internal / "原件md"}')
     print(f'报告：{internal / "报告.md"}')
     return 1 if failed else 0
 
@@ -654,7 +721,7 @@ def write_report(path: Path, results: List[FileResult], skipped: List[Path], arg
         f'- 词典：{args.dict}（{n_terms} 条）；规则：{args.patterns}（{n_patterns} 条启用）',
         f'- 结果：{len(results)} 个 .docx，{len(ok)} 个通过复查，{len(results) - len(ok)} 个需处理；跳过 {len(skipped)} 个非 .docx 文件',
         '',
-        '只有 `脱敏文件/` 可以外发。本报告、`对照表.csv` 与 `替换汇总.csv` 含原文。',
+        '只有 `脱敏文件/`（脱敏后的 .docx 与 .md）可以外发。本报告、`原件md/`、`对照表.csv` 与 `替换汇总.csv` 含原文。',
         '',
         '## 替换汇总',
         '',

@@ -766,6 +766,16 @@ class PackageTest(unittest.TestCase):
         self.assertEqual(missing, ['制度编号'])
         self.assertIn('文件名', meta['_from'])
 
+    def test_category_mapping(self):
+        import importer
+        opts = [('governance', '公司治理类'), ('operations', '经营管理类'), ('hr', '人力资源管理类'),
+                ('compliance', '审计合规类'), ('safety', '安全环保监管类'), ('party', '党工纪类'), ('tech', '科技与工程管理类')]
+        for text, value in (('人力资源管理类', 'hr'), ('经营类', 'operations'), ('安全环保监管类', 'safety'),
+                            ('党工纪类', 'party'), ('合规管理类', 'compliance'), ('科技与工程管理类', 'tech'), ('hr', 'hr')):
+            self.assertEqual(importer.map_category(text, opts), value, text)
+        self.assertIsNone(importer.map_category('不存在的分类', opts))
+        self.assertIsNone(importer.map_category('', opts))
+
     def test_import_refuses_internal_folder(self):
         import importer
         with self.assertRaises(SystemExit):

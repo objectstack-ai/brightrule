@@ -29,12 +29,23 @@ export const Policy = ObjectSchema.create({
     category: Field.select({
       label: '制度分类',
       group: 'basic',
+      description: '按制度体系的分类；导入时取自制度信息表的「制度类别」',
+      // The values of the first five predate this list and stay as they were
+      // (seed data and stored records use them); only their labels moved to the
+      // policy system's own wording.
       options: [
-        { label: '行政', value: 'admin' },
-        { label: '人事', value: 'hr' },
-        { label: '财务', value: 'finance' },
-        { label: '信息技术', value: 'it' },
-        { label: '合规', value: 'compliance' },
+        { label: '公司治理类', value: 'governance' },
+        { label: '战略投资类', value: 'strategy' },
+        { label: '经营管理类', value: 'operations' },
+        { label: '人力资源管理类', value: 'hr' },
+        { label: '财务管理类', value: 'finance' },
+        { label: '资产管理类', value: 'asset' },
+        { label: '审计合规类', value: 'compliance' },
+        { label: '安全环保监管类', value: 'safety' },
+        { label: '科技与工程管理类', value: 'tech' },
+        { label: '数字化管理类', value: 'it' },
+        { label: '党工纪类', value: 'party' },
+        { label: '综合行政类', value: 'admin' },
       ],
     }),
     issuing_unit: Field.text({ label: '发文单位', maxLength: 100, group: 'basic' }),

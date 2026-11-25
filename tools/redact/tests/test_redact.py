@@ -356,18 +356,20 @@ class MarkdownTest(unittest.TestCase):
                  'word/styles.xml': styles.encode()}
         md = docx2md.docx_to_markdown(parts)
         heads = [l for l in md.split('\n') if l.startswith('#')]
-        self.assertEqual(heads, ['# 发文通知', '# 制度信息', '# 目录', '# 正文：示例办法',
+        self.assertEqual(heads, ['# 发文通知', '# 制度信息', '# 正文：示例办法',
                                  '## 第一章 总则', '## 第二章 附则', '# 版记'])
-        self.assertIn('- 第一章 总则\n- 第二章 附则', md)          # 目录：列表、去页码、不当章标题
-        self.assertEqual(md.count('## 第一章 总则'), 1)
+        self.assertNotIn('目录', md)                                # 目录整体去掉
+        self.assertEqual(md.count('第一章 总则'), 1)                # 只剩正文里的那一处
 
     def test_manual_table_of_contents(self):
         import docx2md
         body = ''.join(f'<w:p><w:r><w:t xml:space="preserve">{t}</w:t></w:r></w:p>' for t in (
             '目　录', '第一章　总则……………1', '第二章　附则……………2', '示例办法', '第一章　总则', '第一条　为规范管理。'))
         md = docx2md.docx_to_markdown({'word/document.xml': f'<w:document {W}><w:body>{body}</w:body></w:document>'.encode()})
-        self.assertIn('# 目录\n\n- 第一章　总则\n- 第二章　附则', md)
-        self.assertEqual(md.count('## 第一章'), 1)
+        self.assertNotIn('目', md)
+        self.assertNotIn('……', md)
+        self.assertEqual(md.count('第一章'), 1)
+        self.assertIn('# 正文：示例办法', md)
 
     def test_attachments_split_from_body(self):
         import docx2md

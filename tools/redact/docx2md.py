@@ -7,6 +7,7 @@
 - 表格 → Markdown 表格（合并单元格展开为空格子）；文本框里的文字单独成段。
 - 脚注放在文末；图片写成「（图片）」；页眉页脚不输出。
 - 新版 Word 为兼容旧版会把文本框、形状再存一份（mc:Fallback），只读第一份，不重复。
+- 目录（Word 自动目录或手写的「目录 + 标题页码」）整体去掉，不进 Markdown。
 
 附件拆分（split_document）：正文之后单独一行「附件」「附件1」的位置是附件的起点，下一行是附件标题；
 每个附件到下一个附件、或到文末版记（「……印发」「抄送：」）为止。版记归正文。
@@ -46,7 +47,6 @@ COLOPHON = re.compile(r'(印发|印制)$|^抄\s*送\s*[:：]')
 # 目录：Word 目录样式（toc 1 / 目录 1）、指向 _Toc 书签的链接、目录控件；手写目录是「目录」二字之后一串「标题 + 页码」
 TOC_STYLE = re.compile(r'^(?:toc|目录)\s*\d$')
 TOC_TITLE = re.compile(r'^目\s*录$')
-TOC_PAGE = re.compile(r'(?:[\s\.·…_．—\-]*)\s*(\d{1,4}|[ivxlcdmIVXLCDM]{1,6})$')
 TOC_MANUAL = re.compile(r'^(?:第[零〇一二三四五六七八九十百千0-9]+[章节条]|附\s*件|[一二三四五六七八九十]+、|\d+(?:\.\d+)*\s).{0,60}?'
                         r'(?:[\.·…_．—\-]{2,}|\s)\s*\d{1,4}$')
 TOC_MARK = '\x01目录\x01'
@@ -306,8 +306,7 @@ class Converter:
         text = re.sub(r'[ \t\u3000]+\n', '\n', text).strip()
         blocks: List[str] = []
         if text and self._toc_line(p, sid, text):
-            entry = TOC_PAGE.sub('', label + text).strip() if not TOC_TITLE.match(text) else ''
-            blocks.append(TOC_MARK + entry)   # 目录行：不当标题，去页码，渲染时归到「# 目录」下
+            blocks.append(TOC_MARK + text)   # 目录行：渲染时整体去掉，不当成章标题
             return blocks
         if text:
             blocks.append(self._block(label, text, ppr, sid))
@@ -412,7 +411,7 @@ class Converter:
         holder = etree.Element(w('body'))
         holder.extend(copy.deepcopy(e) for e in elements)
         self.manual_toc = False
-        blocks = group_toc(self.blocks(holder))
+        blocks = drop_toc(self.blocks(holder))
         if sections:
             blocks = label_sections(blocks)
         if not notes:
@@ -423,33 +422,14 @@ class Converter:
         return '\n\n'.join(blocks) + '\n'
 
 
-def group_toc(blocks: List[str]) -> List[str]:
-    """把目录行收拢到「# 目录」下，每条一行列表。"""
-    out: List[str] = []
-    entries: List[str] = []
-
-    def flush() -> None:
-        if entries:
-            out.append('# 目录\n\n' + '\n'.join(f'- {e}' for e in entries))
-            entries.clear()
-    for b in blocks:
-        if b.startswith(TOC_MARK):
-            e = b[len(TOC_MARK):]
-            if e:
-                entries.append(e)
-            elif not entries and out and out[-1].startswith('# 目录'):
-                continue
-            else:
-                flush() if entries else None
-            continue
-        flush()
-        out.append(b)
-    flush()
-    return [b for b in out if b != '# 目录\n\n']
+def drop_toc(blocks: List[str]) -> List[str]:
+    """去掉目录：目录行（含「目录」二字）不进 Markdown。目录只有标题和页码，对问答没有帮助，
+    还会被检索命中、被当成章标题，所以识别出来后直接丢弃。"""
+    return [b for b in blocks if not b.startswith(TOC_MARK)]
 
 
 def label_sections(blocks: List[str]) -> List[str]:
-    """标出各部分：发文通知、制度信息、目录（已标）、正文、版记。认不出正文（没有章、条）时原样返回。"""
+    """标出各部分：发文通知、制度信息、正文、版记（目录已去掉）。认不出正文（没有章、条）时原样返回。"""
     first = next((i for i, b in enumerate(blocks) if SECTION_RX.match(b)), None)
     if first is None:
         return blocks
@@ -470,8 +450,7 @@ def label_sections(blocks: List[str]) -> List[str]:
     head = blocks[:start]
     out: List[str] = []
     info = [i for i, b in enumerate(head) if b.startswith('|') and INFO_TABLE.search(b)]
-    toc = [i for i, b in enumerate(head) if b.startswith('# 目录')]
-    marks = sorted(set(info + toc))
+    marks = sorted(info)
     notice = head[:marks[0]] if marks else head
     if notice:
         out.append('# 发文通知' if any(NOTICE_RX.search(b) for b in notice) else '# 文件开头')

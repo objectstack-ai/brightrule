@@ -394,7 +394,7 @@ class Attachment:
 
     @property
     def name(self) -> str:
-        """文件名（不含扩展名），如「附件1-C集团接待审批表」。"""
+        """文件名（不含扩展名），如「附件1-M集团接待审批表」。"""
         title = BAD_NAME.sub('_', self.title).strip(' ._')[:60]
         return f'附件{self.number}' + (f'-{title}' if title else '')
 

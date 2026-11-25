@@ -357,10 +357,10 @@ class MarkdownTest(unittest.TestCase):
 class SuspectTest(unittest.TestCase):
     def test_generic_words_before_suffix_are_not_names(self):
         text = ('员工外出参加非集团组织的培训，严格按照集团规定，根据各子公司情况，本办法由集团解释，'
-                '出差申请单报集团备案，已经C集团研究，B市C集团有限责任公司印发，合作单位南方未登记贸易有限公司。')
+                '出差申请单报集团备案，已经M集团研究，K市M集团有限责任公司印发，合作单位南方未登记贸易有限公司。')
         found = redact.suspects_in(text, [])
-        self.assertIn('C集团', found)
-        self.assertIn('B市C集团有限责任公司', found)
+        self.assertIn('M集团', found)
+        self.assertIn('K市M集团有限责任公司', found)
         self.assertIn('南方未登记贸易有限公司', found)
         for noise in ('非集团', '按照集团', '各子公司', '由集团', '报集团', '集团', '子公司'):
             self.assertNotIn(noise, found)
@@ -397,10 +397,10 @@ class SpacedNameTest(unittest.TestCase):
             self.assertEqual(scan.person_names(text), [], text)
 
     def test_redaction_ignores_layout_spaces_between_chinese_characters(self):
-        red = redact.Redactor([redact.Term('人名', '张三丰', '人员A'), redact.Term('集团', 'B市C集团', '甲集团')], [])
+        red = redact.Redactor([redact.Term('人名', '张三丰', '人员A'), redact.Term('集团', 'K市M集团', '甲集团')], [])
         self.assertEqual(red.redact_string('签发人：张 三 丰')[0], '签发人：人员A')
         self.assertEqual(red.redact_string('签发人：张\u3000\u3000三\u3000\u3000丰。')[0], '签发人：人员A。')
-        self.assertEqual(red.redact_string('B 市 C 集团')[0], '甲集团')
+        self.assertEqual(red.redact_string('K 市 M 集团')[0], '甲集团')
         self.assertEqual([t.original for t in red.leaked_terms('落款：张 三 丰')], ['张三丰'])
         self.assertEqual(red.redact_string('张三 丰收')[1][0].term, '张三丰')   # 命中记到词典原文上
 
@@ -482,13 +482,13 @@ class ScanTest(unittest.TestCase):
         import scan
         sc = scan.Scan([])
         # 简称先出现、中间写法再出现、全称最后才出现：仍是一组
-        for para in ('经C集团研究决定。', '由B市C集团负责。', '本办法适用于华东示例集团。',
-                     'B市C集团有限责任公司  2025年1月9日印发', '华东示例集团有限公司文件'):
+        for para in ('经M集团研究决定。', '由K市M集团负责。', '本办法适用于华东示例集团。',
+                     'K市M集团有限责任公司  2025年1月9日印发', '华东示例集团有限公司文件'):
             sc.scan_paragraph('a.docx', para)
         rows = {c.text: c for c in sc.finish()}
-        self.assertEqual({rows[t].replacement for t in ('C集团', 'B市C集团', 'B市C集团有限责任公司')},
-                         {rows['B市C集团有限责任公司'].replacement})
-        self.assertEqual(rows['C集团'].group, 'B市C集团有限责任公司')
+        self.assertEqual({rows[t].replacement for t in ('M集团', 'K市M集团', 'K市M集团有限责任公司')},
+                         {rows['K市M集团有限责任公司'].replacement})
+        self.assertEqual(rows['M集团'].group, 'K市M集团有限责任公司')
         self.assertEqual(rows['华东示例集团'].replacement, rows['华东示例集团有限公司'].replacement)
         self.assertNotIn('于华东示例集团', rows)
 
@@ -496,10 +496,10 @@ class ScanTest(unittest.TestCase):
         import scan
         sc = scan.Scan([])
         sc.scan_paragraph('a.docx', '关于印发《青松集团接待管理规定》的通知')
-        sc.scan_paragraph('a.docx', '镇集团党群工作部文件')
+        sc.scan_paragraph('a.docx', '村集团办公室文件')
         rows = {c.text: c for c in sc.finish()}
         self.assertEqual(rows['青松集团'].confidence, '中')        # 默认启用
-        self.assertEqual(rows['镇集团'].confidence, '低')          # 单字前缀，多半是误切
+        self.assertEqual(rows['村集团'].confidence, '低')          # 单字前缀，多半是误切
 
     def test_scan_proposes_a_usable_dictionary(self):
         import scan
@@ -510,16 +510,16 @@ class ScanTest(unittest.TestCase):
             cells = ('<w:tbl><w:tr><w:tc><w:p><w:r><w:t>经办人</w:t></w:r></w:p></w:tc>'
                      '<w:tc><w:p><w:r><w:t xml:space="preserve">赵 六</w:t></w:r></w:p></w:tc></w:tr></w:tbl>')
             body = cells + ''.join(f'<w:p><w:r><w:t xml:space="preserve">{t}</w:t></w:r></w:p>' for t in (
-                '关于印发《C集团差旅费管理办法》的通知', 'HDB字﹝2025﹞3号',
-                '各下属企业：经C集团研究，切实加强集团管理，请结合集团实际执行。',
-                '制度编码：华集-XZ-GL-03-07-01', '一类地区指北京、上海；三类地区指A省内城市（不含D市）。',
-                '参照B市财办﹝2021﹞36号执行，联系人：张建国，电话 13812345678。', '签发人：亓 玉 林',
-                '由王小明总经理签发，提高总经理办公会效率。', '办公地址：B市示例区建设路18号3楼。',
+                '关于印发《M集团差旅费管理办法》的通知', 'HDB字﹝2025﹞3号',
+                '各下属企业：经M集团研究，切实加强集团管理，请结合集团实际执行。',
+                '制度编码：华集-XZ-GL-03-07-01', '一类地区指北京、上海；三类地区指J省内城市（不含P市）。',
+                '参照K市财办﹝2021﹞36号执行，联系人：张建国，电话 13812345678。', '签发人：亓 玉 林',
+                '由王小明总经理签发，提高总经理办公会效率。', '办公地址：K市示例区建设路18号3楼。',
                 '审批请登录华示OA系统，详见 https://oa.cgroup-demo.com/x 。',
-                'B市C集团有限责任公司综合办公室  2025年1月9日印发'))
+                'K市M集团有限责任公司综合办公室  2025年1月9日印发'))
             doc = f'<w:document {W}><w:body>{body}</w:body></w:document>'
             parts = dict(PARTS, **{'word/document.xml': doc, 'word/comments.xml': COMMENTS})
-            with zipfile.ZipFile(src / 'C集团差旅费管理办法.docx', 'w') as z:
+            with zipfile.ZipFile(src / 'M集团差旅费管理办法.docx', 'w') as z:
                 for name, text in parts.items():
                     z.writestr(name, text)
             out = tmp / '结果'
@@ -530,10 +530,10 @@ class ScanTest(unittest.TestCase):
                 rows = {r['原文']: r for r in csv.DictReader(f) if r['原文']}
             active = {k for k, r in rows.items() if not r['类别'].startswith('#')}
             # 全称、简称同组同替换值
-            for name in ('B市C集团有限责任公司', 'B市C集团', 'C集团'):
+            for name in ('K市M集团有限责任公司', 'K市M集团', 'M集团'):
                 self.assertIn(name, active)
-            self.assertEqual({rows[n]['替换为'] for n in ('B市C集团有限责任公司', 'B市C集团', 'C集团')}, {rows['C集团']['替换为']})
-            for name in ('B市', 'A省', 'D市', 'HDB字', '亓玉林', '赵六', '华集-XZ-GL-03-07-01', '张建国', '王小明', '王某某', 'cgroup-demo.com'):
+            self.assertEqual({rows[n]['替换为'] for n in ('K市M集团有限责任公司', 'K市M集团', 'M集团')}, {rows['M集团']['替换为']})
+            for name in ('K市', 'J省', 'P市', 'HDB字', '亓玉林', '赵六', '华集-XZ-GL-03-07-01', '张建国', '王小明', '王某某', 'cgroup-demo.com'):
                 self.assertIn(name, active, name)
             self.assertTrue(any('建设路18号' in k for k in active))
             self.assertIn('华东示例控股集团有限公司', active)      # Word 属性里的单位

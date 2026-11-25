@@ -159,14 +159,14 @@ class Scan:
                 self.add('地名', name, '中', '地名（××省 / 市 / 县 / 区）', file, para)
         for m in DOC_NO.finditer(para):
             prefix = trim_lead(m.group(1))
-            # 「B市财办」「A省国资考核字」：地名之后是通用的机关代字，替换地名就够了；「B市HDGO」只留 HDGO
+            # 「K市财办」「J省国资考核字」：地名之后是通用的机关代字，替换地名就够了；「K市HDGO」只留 HDGO
             pm = re.match(r'^[A-Z一-龥]{1,6}?[省市县区]', prefix)
             if pm:
                 prefix = prefix[pm.end():]
                 if re.fullmatch(r'[一-龥]{1,6}', prefix):
                     continue
             if prefix and not re.fullmatch(r'[一-龥]{0,2}', prefix):
-                # 机关代字（如 HDGO、B市财办）替换掉，文号整体就认不出单位了，不必逐个列文号
+                # 机关代字（如 HDGO、K市财办）替换掉，文号整体就认不出单位了，不必逐个列文号
                 self.add('文号', prefix, '高', '公文文号里的机关代字，常是单位简称', file, para)
             else:
                 full = f'{prefix}{m.group(0)[len(m.group(1)):]}'.strip()
@@ -196,7 +196,7 @@ class Scan:
     def finish(self) -> List[Candidate]:
         texts = [p for _f, p in self.paragraphs]
         # 机构简称：全称去掉法定后缀、再去掉地名前缀，在文档里确实出现过的才列出。
-        # 全称、简称、简称的简称（B市C集团有限责任公司 → B市C集团 → C集团）连成一组，共用一个替换值；
+        # 全称、简称、简称的简称（K市M集团有限责任公司 → K市M集团 → M集团）连成一组，共用一个替换值；
         # 组名取组里最长的写法。先处理长的，保证简称挂到全称上。
         parent: Dict[str, str] = {}
 
@@ -235,7 +235,7 @@ class Scan:
                         a.example = p[max(0, i - 12): i + len(alias) + 12]
                 parent.setdefault(alias, alias)
                 union(c.text, alias)
-            # 名称里的地名前缀（如「B市」）提高置信度：它能指认公司所在地
+            # 名称里的地名前缀（如「K市」）提高置信度：它能指认公司所在地
             m = re.match(r'^([A-Z一-龥]{1,6}?[省市县区])', c.text)
             if m and ('地名', m.group(1)) in self.cands:
                 p = self.cands[('地名', m.group(1))]

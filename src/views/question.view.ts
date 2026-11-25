@@ -12,7 +12,6 @@ const questionViews: UI.View = {
       { field: 'question' },
       { field: 'scope_kind' },
       { field: 'scope_policy' },
-      { field: 'scope_version' },
       { field: 'status' },
       { field: 'answer' },
       { field: 'cited_clause' },
@@ -29,7 +28,6 @@ const questionViews: UI.View = {
       columns: [
         { field: 'question' },
         { field: 'scope_policy' },
-        { field: 'scope_version' },
         { field: 'answer' },
         { field: 'match_score' },
         { field: 'created_at' },

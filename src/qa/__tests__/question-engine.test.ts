@@ -13,8 +13,7 @@ describe('inquiry hooks on the engine', () => {
   let stack: VerifyStack;
   let asker: string;
   let member: string;
-  let current: Row;
-  let superseded: Row | undefined;
+  let published: Row;
 
   beforeAll(async () => {
     stack = await bootStack(config);
@@ -23,9 +22,8 @@ describe('inquiry hooks on the engine', () => {
     // create a question at all until the permission sets of brightrule#10.
     asker = await stack.signIn();
     member = await stack.signUp('member@example.com');
-    const versions = (await stack.rows('brightrule_policy_version', {})) as Row[];
-    current = versions.find((v) => v.version_status === 'current')!;
-    superseded = versions.find((v) => v.version_status === 'superseded');
+    const policies = (await stack.rows('brightrule_policy', {})) as Row[];
+    published = policies.find((p) => p.status === 'published')!;
   });
 
   afterAll(async () => {
@@ -104,7 +102,7 @@ describe('inquiry hooks on the engine', () => {
         answer_source: 'ai',
         answer_route: 'whole',
         status: 'answered',
-        basis: [{ policy: 'p', version: 'v', article: '第五条', quote: '每晚 600 元' }],
+        basis: [{ policy: 'p', article: '第五条', quote: '每晚 600 元' }],
         run_info: { conversation_id: 'conv-test' },
       },
       { context },
@@ -112,7 +110,7 @@ describe('inquiry hooks on the engine', () => {
     expect(row.answer).toBe('可以，标准为每晚 600 元。');
     expect(row.answer_route).toBe('whole');
     expect(row.status).toBe('answered');
-    expect(row.basis).toEqual([{ policy: 'p', version: 'v', article: '第五条', quote: '每晚 600 元' }]);
+    expect(row.basis).toEqual([{ policy: 'p', article: '第五条', quote: '每晚 600 元' }]);
   });
 
   it('keeps the escalate action working: its write is a system write, owned by the asker', async () => {
@@ -131,29 +129,26 @@ describe('inquiry hooks on the engine', () => {
     expect(stored.owner_id).toBe((await stack.contextFor(member)).userId);
   });
 
-  it('fills the policy from a current version and derives scope_kind', async () => {
-    const row = (await stack.hooks.run(
-      Question.name,
-      'insert',
-      { question: '这份制度的适用范围？', scope_version: current.id },
-      { as: asker },
-    )) as Row;
-    expect(refId(row.scope_policy)).toBe(refId(current.policy));
-    expect(row.scope_kind).toBe('version');
-
+  it('derives scope_kind from a published policy, overriding the payload', async () => {
     const byPolicy = (await stack.hooks.run(
       Question.name,
       'insert',
-      { question: '这份制度谁负责解释？', scope_policy: refId(current.policy), scope_kind: 'general' },
+      { question: '这份制度谁负责解释？', scope_policy: published.id, scope_kind: 'general' },
       { as: asker },
     )) as Row;
+    expect(refId(byPolicy.scope_policy)).toBe(published.id);
     expect(byPolicy.scope_kind).toBe('policy');
   });
 
-  it('refuses a version that is not current', async () => {
-    expect(superseded, 'the seed holds a superseded version').toBeTruthy();
+  it('refuses a policy that is not published', async () => {
+    const draft = (await stack.hooks.run(
+      'brightrule_policy',
+      'insert',
+      { title: '尚未发布的示例制度', status: 'draft' },
+      { as: asker },
+    )) as Row;
     await expect(
-      stack.hooks.run(Question.name, 'insert', { question: '旧版怎么规定？', scope_version: superseded!.id }, { as: asker }),
-    ).rejects.toMatchObject({ code: 'QUESTION_SCOPE_VERSION_NOT_CURRENT' });
+      stack.hooks.run(Question.name, 'insert', { question: '草稿怎么规定？', scope_policy: draft.id }, { as: asker }),
+    ).rejects.toMatchObject({ code: 'QUESTION_SCOPE_POLICY_NOT_PUBLISHED' });
   });
 });

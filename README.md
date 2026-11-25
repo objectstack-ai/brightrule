@@ -14,24 +14,24 @@
 制度全生命周期与 AI 问询的解决方案见 [`docs/solution.md`](docs/solution.md)（草案，待评审）。
 选中一份制度问 AI（记录范围问询）、字段 / 子表 / 关联 / 附件怎样交给 AI、技能怎么用，见 [`docs/design-record-scoped-ai.md`](docs/design-record-scoped-ai.md)（草案，待评审）。
 
-> 分支 `feature/policy-inquiry` 是领域模型与问询的原型：制度、版本、条款、问询四个对象，
-> 版本设为现行时条款现行状态自动联动。脚手架自带的 `note` 示例对象尚未删除。
+> 分支 `feature/policy-inquiry` 是领域模型与问询的原型：制度（正文写在制度上，子表「制度附件」）、条款、问询；
+> 没有版本（brightrule#45），制度发布时条款现行状态自动联动。脚手架自带的 `note` 示例对象尚未删除。
 
 ### 怎么问
 
 - **对话问询（主入口，ObjectOS）**：员工在 ObjectOS 的 AI 对话面板里直接提问。
-  `src/skills/policy-inquiry.skill.ts` 是「制度问询」技能：只依据提问人有权查看的现行版本脱敏正文
-  （制度的 `current_version` → 版本的 `body_md`，规范性附件一并读）作答、注明《制度》版本 第 N 条；点名或选中制度时只读这一份；
+  `src/skills/policy-inquiry.skill.ts` 是「制度问询」技能：只依据提问人有权查看的已发布制度的脱敏正文
+  （制度的 `body_md`，制度附件一并读）作答、注明《制度》文号 第 N 条；点名或选中制度时只读这一份；
   找不到依据时回答「未找到相关规定」（一期不转人工，brightrule#18）。
   ⚠️ 截至 ObjectOS 18.6.0，平台的 `ask` 智能体还不加载应用技能（[objectstack-ai/cloud#4935](https://github.com/objectstack-ai/cloud/issues/4935)），
   对话的回答来自 `ask` 自带的数据查询能力，技能里的规则尚未生效。
 - **MCP 问询（外部 AI 客户端）**：客户自带的大模型（Claude、DeepSeek 等）连 `/api/v1/mcp`，
   平台把「制度问询」技能作为提示词 `brightrule-brightrule_policy_inquiry` 下发，已实测可用。
-- **表单问询（兜底）**：在「制度问询 → 我要问询」新建一条问题，保存即自动答复
+- **表单问询（兜底）**：新建一条制度问询（`brightrule_question`，导航里已没有入口，brightrule#45），保存即自动答复
   （`src/qa/question-answer.hook.ts`）：先检索出提问人可见的现行条款，再由平台配置的大模型
   （系统设置 → AI）判断哪几条能回答、依据它们作答并注明出处（`src/qa/judge.ts`）。没有配置大模型、
   调用失败或超时，则只列出可能相关的条款供参考，并转人工；不会把检索第一名直接当作答案。
-- **转人工**：表单问询转人工的问题进入「待人工答复」，由归口部门答复。
+- **转人工**：表单问询转人工的问题标为「需转人工」（问询对象的「待人工答复」视图），由归口部门答复。
 
 在 ObjectOS 企业版上部署见 [`deploy/objectos-ee`](deploy/objectos-ee/README.md)；
 三条问询路径的实测数据见 [`docs/evaluation-2026-11-23.md`](docs/evaluation-2026-11-23.md)。

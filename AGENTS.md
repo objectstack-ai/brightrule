@@ -24,7 +24,8 @@ domain metadata.
   means a permission / security policy; use `brightrule_policy`,
   `brightrule_clause`, … so agents and humans never confuse 制度 with 权限策略.
 - **The clause (条款) is the unit** of management and retrieval, not the file.
-  A revision creates a new version; never edit an effective version in place.
+  There are no versions (brightrule#45): a revision overwrites the policy's
+  body (`brightrule_policy.body_md`), and its original file is the archive.
 - **Clause permissions follow the parent policy** (master-detail, controlled by
   parent). Applicability is expressed with `organization_id` + sharing rules,
   not by duplicating clauses per subsidiary.

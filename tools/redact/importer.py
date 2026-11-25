@@ -128,6 +128,9 @@ class Api:
     def update(self, obj: str, rid: str, row: Dict) -> Dict:
         return self.call('PATCH', f'/api/v1/data/{obj}/{rid}', row)
 
+    def delete(self, obj: str, rid: str) -> None:
+        self.call('DELETE', f'/api/v1/data/{obj}/{rid}')
+
     def upload(self, data: bytes, filename: str, mime: str = DOCX_MIME) -> str:
         pre = self.call('POST', '/api/v1/storage/upload/presigned', {'filename': filename, 'mimeType': mime, 'size': len(data)})
         pre = pre.get('data', pre)
@@ -193,6 +196,30 @@ def map_category(text: str, options: List[Tuple[str, str]]) -> Optional[str]:
     return max(hits)[1] if hits else None
 
 
+POLICY_SELECT = 'id,title,policy_no,department,issuing_unit,category,status'
+
+
+def find_policies(api: Api, policy_no: str, title: str) -> Tuple[List[Dict], str]:
+    """批次清单一行对应的系统制度：有制度编号按编号找；没有按名称找（编号、生效日期可以之后在页面上补，
+    补过的不会被清空，再导入也还能对上）。返回找到的记录和用于提示重复的说明。"""
+    if policy_no:
+        return api.find('brightrule_policy', {'policy_no': policy_no}, POLICY_SELECT), f'制度编号都是 {policy_no}'
+    return api.find('brightrule_policy', {'title': title}, POLICY_SELECT), f'名称都是「{title}」'
+
+
+def open_package(path: Path) -> Path:
+    """检查 --package：必须是 package.py 生成的导入包，不能是脱敏结果或内部留存。"""
+    package = path.resolve()
+    if '内部留存' in str(package):
+        raise SystemExit('拒绝：导入只读导入包，不读「内部留存-勿外发」。')
+    if not (package / '批次清单.csv').exists():
+        if package.name == '脱敏文件' or (package / '脱敏文件').is_dir():
+            raise SystemExit(f'这是脱敏结果，不是导入包：先运行 ./run.sh package --run <脱敏结果/时间>，'
+                             f'再把它生成的「导入包/<时间>」目录交给 --package。（{path}）')
+        raise SystemExit(f'不是导入包（没有 批次清单.csv）：{path}')
+    return package
+
+
 def plan_row(api: Api, package: Path, row: Dict[str, str], options: List[Tuple[str, str]]) -> RowPlan:
     rp = RowPlan(row.get('包内目录', ''), row.get('制度编号', ''), row.get('制度名称', ''), row.get('版本号', ''))
     missing = [k for k in ('制度名称', '版本号') if not row.get(k)]
@@ -223,14 +250,8 @@ def plan_row(api: Api, package: Path, row: Dict[str, str], options: List[Tuple[s
         else:
             rp.notes.append(f'制度类别「{row["制度类别"]}」不在系统的选项里，没有填')
 
-    select = 'id,title,policy_no,department,issuing_unit,category,status'
-    if rp.policy_no:
-        found = api.find('brightrule_policy', {'policy_no': rp.policy_no}, select)
-        key = f'制度编号都是 {rp.policy_no}'
-    else:
-        # 没有制度编号：按名称对应。编号、生效日期可以之后在页面上补，补过的不会被清空，再导入也还能对上
-        found = api.find('brightrule_policy', {'title': rp.title}, select)
-        key = f'名称都是「{rp.title}」'
+    found, key = find_policies(api, rp.policy_no, rp.title)
+    if not rp.policy_no:
         rp.notes.append('没有制度编号，按制度名称对应；导入后可在页面上补')
     policy = found[0] if found else None
     if len(found) > 1:
@@ -337,14 +358,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument('--apply', action='store_true', help='真正写入；不加只预演')
     ap.add_argument('--login', action='store_true', help='运行时输入账号密码登录（上传文件需要登录会话）')
     args = ap.parse_args(argv)
-    package = args.package.resolve()
-    if '内部留存' in str(package):
-        raise SystemExit('拒绝：导入只读导入包，不读「内部留存-勿外发」。')
-    if not (package / '批次清单.csv').exists():
-        if package.name == '脱敏文件' or (package / '脱敏文件').is_dir():
-            raise SystemExit(f'这是脱敏结果，不是导入包：先运行 ./run.sh package --run <脱敏结果/时间>，'
-                             f'再把它生成的「导入包/<时间>」目录交给 --package。（{args.package}）')
-        raise SystemExit(f'不是导入包（没有 批次清单.csv）：{args.package}')
+    package = open_package(args.package)
     api = Api(args.url, login=args.login)
     options = api.category_options()
     rows = [r for r in read_sheet(package) if r.get('导入', '是') == '是']

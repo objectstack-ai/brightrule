@@ -6,7 +6,8 @@ import { PolicyRelation } from '../objects/policy-relation.object.js';
 import { Clause } from '../objects/clause.object.js';
 import { assembleBody, textStats } from './document-text.js';
 
-// Sample policies. Lookups name their parent by its seed key (`title`).
+// Sample policies — fictional demo data, loaded in dev and test only (never in
+// production). Lookups name their parent by its seed key (`title`).
 // No inquiries are seeded: an inquiry is answered when it is saved, so the
 // demo asks its questions against the running app.
 
@@ -17,6 +18,7 @@ const G = '反商业贿赂与利益冲突管理规定';
 const C = '合同管理办法';
 
 const policies = defineSeed(Policy, {
+  env: ['dev', 'test'],
   externalId: 'title',
   records: [
     { title: T, policy_no: 'FIN-001', issuing_unit: '集团', category: 'finance', department: '财务部', status: 'published', current_version: 'V3.0', effective_date: '2026-07-01', next_review_date: '2027-06-30', summary: '国内出差的住宿、交通、补贴标准与报销要求。' },
@@ -28,6 +30,7 @@ const policies = defineSeed(Policy, {
 });
 
 const versions = defineSeed(PolicyVersion, {
+  env: ['dev', 'test'],
   externalId: 'title',
   records: [
     { title: `${T} V2.0`, policy: T, version_no: 'V2.0', version_status: 'superseded', effective_date: '2024-07-01', change_note: '旧版本，已被 V3.0 替代。' },
@@ -59,6 +62,7 @@ const isCurrentVersion = (title: string) =>
   versions.records.some((v) => v.title === title && v.version_status === 'current');
 
 const clauses = defineSeed(Clause, {
+  env: ['dev', 'test'],
   externalId: 'title',
   records: CLAUSES.map(([policy, version, no, title, content, keywords]) => ({
     title: `${policy} ${version} ${no} ${title}`,
@@ -142,6 +146,7 @@ const LODGING_TABLE = [
 
 const T3 = `${T} V3.0`;
 const documents = defineSeed(PolicyDocument, {
+  env: ['dev', 'test'],
   externalId: 'title',
   records: [
     ...versions.records.map(bodyDocument),
@@ -179,6 +184,7 @@ const documents = defineSeed(PolicyDocument, {
 // shows in 待确认关系 — and one links two library policies. All names are the
 // synthetic sample policies above or invented titles.
 const relations = defineSeed(PolicyRelation, {
+  env: ['dev', 'test'],
   externalId: ['from_version', 'relation_type', 'to_title'],
   records: [
     {

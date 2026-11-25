@@ -54,7 +54,16 @@ export default defineStack({
   // hold one.
   // `realtime` carries the record events the policy-inquiry index follows
   // (src/qa): a clause written after boot is re-indexed from its event.
-  requires: ['automation', 'triggers', 'realtime'],
+  // ObjectOS Cloud environments do not provide it and refuse to build an app
+  // that requires it; they also load no app code plugins, so the index it
+  // feeds does not run there. `pnpm run deploy` builds with
+  // BRIGHTRULE_TARGET=cloud, which leaves it out. Local dev and the EE image
+  // (deploy/objectos-ee) keep it.
+  requires: [
+    'automation',
+    'triggers',
+    ...(process.env.BRIGHTRULE_TARGET === 'cloud' ? [] : (['realtime'] as const)),
+  ],
 
   // Generic connector executors, default-present so you can add a `connectors:`
   // entry naming `provider: 'rest' | 'openapi' | 'mcp'` and have it materialize

@@ -1,7 +1,8 @@
 #!/bin/bash
 # 制度文档脱敏工具：第一次运行时在 .venv 里安装依赖，之后直接运行。
-# ./run.sh scan --input 原件目录 [--dict 已有词典.csv]   先扫描出候选词典
-# ./run.sh --input 原件目录 --dict 词典.csv              再脱敏
+# 1. ./run.sh convert --input 原件目录 --output 转换后目录     .doc 等转成 .docx（只有 .docx 时可跳过）
+# 2. ./run.sh scan --input 转换后目录 [--dict 已有词典.csv]     扫描出候选词典
+# 3. ./run.sh --input 转换后目录 --dict 词典.csv               脱敏
 set -euo pipefail
 cd "$(dirname "$0")"
 if [ ! -x .venv/bin/python ]; then
@@ -10,9 +11,11 @@ if [ ! -x .venv/bin/python ]; then
   .venv/bin/pip install --quiet --upgrade pip
   .venv/bin/pip install --quiet -r requirements.txt
 fi
-# ./run.sh scan …  扫描原件、生成候选词典；其余参数照常脱敏
-if [ "${1:-}" = "scan" ]; then
-  shift
-  exec .venv/bin/python scan.py "$@"
-fi
+# ./run.sh convert …  .doc 等旧格式批量转成 .docx
+# ./run.sh scan …     扫描、生成候选词典
+# ./run.sh …          脱敏
+case "${1:-}" in
+  convert) shift; exec .venv/bin/python convert.py "$@" ;;
+  scan) shift; exec .venv/bin/python scan.py "$@" ;;
+esac
 exec .venv/bin/python redact.py "$@"

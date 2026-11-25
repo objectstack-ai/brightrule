@@ -20,10 +20,7 @@ import hashlib
 import io
 import os
 import re
-import shutil
-import subprocess
 import sys
-import tempfile
 import time
 import traceback
 import zipfile
@@ -36,6 +33,7 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 from lxml import etree
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from convert import CONVERTIBLE  # noqa: E402
 from docx2md import attachment_docx, document_markdown, split_document  # noqa: E402
 
 # ── Word XML 命名空间 ──────────────────────────────────────────────────────
@@ -625,47 +623,6 @@ def process_docx(src: Path, dst: Path, red: Redactor, orig_md: Optional[Path] = 
     return result
 
 
-# ── 旧格式转换 ────────────────────────────────────────────────────────────
-CONVERTIBLE = ('.doc', '.dot', '.rtf', '.wps', '.odt', '.docm', '.dotx')
-
-
-def find_soffice() -> Optional[str]:
-    for c in (shutil.which('soffice'), shutil.which('libreoffice'),
-              '/Applications/LibreOffice.app/Contents/MacOS/soffice'):
-        if c and Path(c).exists():
-            return c
-    return None
-
-
-def convert_to_docx(src: Path, dst: Path) -> Tuple[Optional[str], str]:
-    """把 .doc 等转成 .docx。返回（用的转换工具，失败原因）。原件只读。"""
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    if src.read_bytes()[:2] == b'PK' and src.suffix.lower() in ('.doc', '.docm', '.dotx'):
-        shutil.copyfile(src, dst)  # 其实就是 .docx，只是扩展名不对
-        return '扩展名更正', ''
-    soffice = find_soffice()
-    if soffice:
-        with tempfile.TemporaryDirectory() as tmp:
-            profile = Path(tmp, 'profile').as_uri()  # 独立配置，不和正在打开的 LibreOffice 冲突
-            try:
-                subprocess.run([soffice, f'-env:UserInstallation={profile}', '--headless', '--convert-to', 'docx',
-                                '--outdir', tmp, str(src)], capture_output=True, timeout=300, check=False)
-            except subprocess.TimeoutExpired:
-                return None, 'LibreOffice 转换超时'
-            out = Path(tmp, src.stem + '.docx')
-            if out.exists():
-                shutil.move(str(out), dst)
-                return 'LibreOffice', ''
-    textutil = shutil.which('textutil')
-    if textutil and src.suffix.lower() in ('.doc', '.dot', '.rtf', '.odt', '.docm'):
-        r = subprocess.run([textutil, '-convert', 'docx', '-output', str(dst), str(src)],
-                           capture_output=True, text=True, timeout=300, check=False)
-        if r.returncode == 0 and dst.exists():
-            return 'Mac textutil', ''
-        return None, f'textutil 转换失败：{(r.stderr or "").strip()[:80]}'
-    return None, '没有可用的转换工具（Mac 自带 textutil 不支持 .wps；可安装 LibreOffice，或在 WPS / Word 里另存为 .docx）'
-
-
 # ── 运行一批文件 ──────────────────────────────────────────────────────────
 def run_dir(base: Path, now: _dt.datetime) -> Path:
     stamp = now.strftime('%Y%m%d-%H')
@@ -730,8 +687,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     help='同时处理的文件数，默认等于 CPU 核数；设为 1 则逐个处理')
     ap.add_argument('--no-md', action='store_true', help='不生成 Markdown（默认生成原件与脱敏后各一份 .md）')
     ap.add_argument('--no-split', action='store_true', help='不拆分附件（默认每个附件另存一个 .docx 和 .md）')
-    ap.add_argument('--convert-doc', action='store_true',
-                    help='把 .doc / .rtf / .wps 等先自动转成 .docx 再脱敏（有 LibreOffice 用它，否则用 Mac 自带的 textutil）')
     args = ap.parse_args(argv)
 
     if not args.input.is_dir():
@@ -748,27 +703,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     sources = sorted(p for p in args.input.rglob('*') if p.is_file() and not p.name.startswith(('~$', '.')))
     skipped = [p for p in sources if p.suffix.lower() != '.docx']
-    conversions: Dict[Path, Tuple[Path, str]] = {}   # 转换出的 .docx → (原件, 转换工具)
-    conv_failed: List[Tuple[Path, str]] = []
-    convertible = [p for p in skipped if p.suffix.lower() in CONVERTIBLE]
-    if args.convert_doc and convertible:
-        conv_dir = internal / '转换后的docx'
-        print(f'先把 {len(convertible)} 个旧格式文件转成 .docx（转换结果含原文，放在「内部留存-勿外发/转换后的docx」）……', flush=True)
-        for n, p in enumerate(convertible, start=1):
-            target = conv_dir / p.relative_to(args.input).with_suffix('.docx')
-            how, why = convert_to_docx(p, target)
-            if how:
-                conversions[target] = (p, how)
-            else:
-                conv_failed.append((p, why))
-            print(f'  转换 {n}/{len(convertible)}', flush=True)
-        done = {orig for orig, _h in conversions.values()}
-        skipped = [p for p in skipped if p not in done]
     jobs = []
-    docx_sources = [p for p in sources if p.suffix.lower() == '.docx'] + list(conversions)
-    for src in docx_sources:
-        rel = (conversions[src][0].relative_to(args.input).with_suffix('.docx') if src in conversions
-               else src.relative_to(args.input))
+    for src in sources:
+        if src.suffix.lower() != '.docx':
+            continue
+        rel = src.relative_to(args.input)
         new_stem, _ = red.redact_string(rel.stem)
         new_parent = Path(*[red.redact_string(part)[0] for part in rel.parent.parts]) if rel.parent.parts else Path()
         orig_md = None if args.no_md else internal / '原件md' / rel.with_suffix('.md')
@@ -791,19 +730,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         for n, job in enumerate(jobs, start=1):
             results.append(_worker(*job))
             _progress(n, len(jobs), started)
-    for r in results:
-        if r.source in conversions:
-            orig, how = conversions[r.source]
-            r.source = orig
-            r.warnings.append(f'由 {orig.suffix} 自动转换（{how}），版式可能与原件有差异，请打开核对')
     results.sort(key=lambda r: str(r.source))
     elapsed = time.monotonic() - started
 
     summary = summarize(results, terms, patterns)
     write_mapping(internal / '对照表.csv', results, args.input)
     write_summary(internal / '替换汇总.csv', summary)
-    write_report(internal / '报告.md', results, skipped, args, out_root, now, len(terms), len(patterns), summary,
-                 conv_failed)
+    write_report(internal / '报告.md', results, skipped, args, out_root, now, len(terms), len(patterns), summary)
 
     failed = [r for r in results if r.error or r.leaks]
     n_att = sum(len(r.attachments) for r in results)
@@ -812,7 +745,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     rule_hits = sum(s.count for s in summary if s.source == '规则')
     unused = [s for s in dict_rows if s.count == 0]
     print(f'处理 {len(results)} 个 .docx（{elapsed:.1f} 秒）'
-          + (f'，其中 {len(conversions)} 个由旧格式自动转换' if conversions else '')
           + f'，跳过 {len(skipped)} 个其他文件，{len(failed)} 个需处理。')
     print(f'共替换 {dict_hits + rule_hits} 处：词典 {dict_hits} 处（{len(dict_rows) - len(unused)}/{len(dict_rows)} 个词条命中），'
           f'格式规则 {rule_hits} 处。' + (f'{len(unused)} 个词条未命中，见报告。' if unused else ''))
@@ -826,19 +758,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         by_ext = Counter(p.suffix.lower() or '（无扩展名）' for p in skipped)
         print('\n跳过的文件（' + '，'.join(f'{e} {n} 个' for e, n in by_ext.most_common()) + '）：')
         for p in skipped[:15]:
-            reason = dict(conv_failed).get(p)
-            print(f'  {p.relative_to(args.input)}' + (f'  ← 转换失败：{reason}' if reason else ''))
+            print(f'  {p.relative_to(args.input)}')
         if len(skipped) > 15:
             print(f'  ……共 {len(skipped)} 个，完整列表见报告')
-        if not args.convert_doc and any(p.suffix.lower() in CONVERTIBLE for p in skipped):
-            print('  .doc / .rtf / .wps 等旧格式：加 --convert-doc 自动转成 .docx 再脱敏，或在 Word / WPS 里另存为 .docx。')
+        if any(p.suffix.lower() in CONVERTIBLE for p in skipped):
+            print('  .doc / .rtf / .wps 等旧格式：先用 ./run.sh convert 转成 .docx，再用转换后的目录脱敏。')
     if failed:
         print('\n需处理的文件：')
         for r in failed[:15]:
             print(f'  {r.source.relative_to(args.input)}  ← ' + (r.error or '泄漏复查未通过，见报告'))
     warned = [r for r in results if r.warnings]
     if warned:
-        print(f'\n{len(warned)} 个文件有提示（如自动转换、Markdown 未生成），见报告。')
+        print(f'\n{len(warned)} 个文件有提示（如 Markdown 未生成），见报告。')
     return 1 if failed else 0
 
 
@@ -887,8 +818,7 @@ def write_mapping(path: Path, results: List[FileResult], input_dir: Path) -> Non
 
 
 def write_report(path: Path, results: List[FileResult], skipped: List[Path], args, out_root: Path,
-                 now: _dt.datetime, n_terms: int, n_patterns: int, summary: List[SummaryRow],
-                 conv_failed: Sequence[Tuple[Path, str]] = ()) -> None:
+                 now: _dt.datetime, n_terms: int, n_patterns: int, summary: List[SummaryRow]) -> None:
     ok = [r for r in results if not r.error and not r.leaks]
     dict_rows = [s for s in summary if s.source == '词典']
     rule_rows = [s for s in summary if s.source == '规则']
@@ -921,11 +851,9 @@ def write_report(path: Path, results: List[FileResult], skipped: List[Path], arg
         lines += [f'- {s.category}：{s.original}' for s in unused]
     lines.append('')
     if skipped:
-        reasons = dict(conv_failed)
-        lines += ['## 跳过的文件', '', '不是 .docx。.doc / .rtf / .wps 等旧格式：运行时加 `--convert-doc` 自动转换，'
-                  '或在 Word / WPS 中「另存为」.docx 后重新运行。', '']
-        lines += [f'- {p.relative_to(args.input)}' + (f'（转换失败：{reasons[p]}）' if p in reasons else '')
-                  for p in skipped] + ['']
+        lines += ['## 跳过的文件', '', '不是 .docx。.doc / .rtf / .wps 等旧格式：先运行 `./run.sh convert` 转成 .docx，'
+                  '或在 Word / WPS 中「另存为」.docx，再用转换后的目录重新运行。', '']
+        lines += [f'- {p.relative_to(args.input)}' for p in skipped] + ['']
     for r in results:
         rel = r.source.relative_to(args.input)
         status = '❌ 需处理' if (r.error or r.leaks) else '✅ 通过复查'

@@ -406,24 +406,50 @@ class SpacedNameTest(unittest.TestCase):
 
 
 class RobustnessTest(unittest.TestCase):
-    def test_bad_file_and_old_format_do_not_stop_the_batch(self):
+    def test_bad_file_does_not_stop_the_batch_and_doc_is_listed(self):
+        tmp = Path(tempfile.mkdtemp())
+        try:
+            src = tmp / '原件'
+            src.mkdir()
+            make_docx(src / '好文件.docx')
+            (src / '坏文件.docx').write_bytes(b'not a zip')
+            (src / '旧格式.doc').write_bytes(b'\xd0\xcf\x11\xe0 old word')
+            out = tmp / '结果'
+            code = redact.main(['--input', str(src), '--dict', str(HERE.parent / '词典示例.csv'), '--output', str(out)])
+            self.assertEqual(code, 1)                                # 坏文件要处理
+            run = next(out.iterdir())
+            self.assertEqual([p.name for p in (run / '脱敏文件').glob('*.docx')], ['好文件.docx'])
+            report = (run / '内部留存-勿外发' / '报告.md').read_text(encoding='utf-8')
+            self.assertIn('不是有效的 .docx', report)
+            self.assertIn('旧格式.doc', report)
+            self.assertIn('./run.sh convert', report)
+        finally:
+            shutil.rmtree(tmp)
+
+
+class ConvertTest(unittest.TestCase):
+    def test_convert_builds_a_docx_only_mirror(self):
+        import convert
         tmp = Path(tempfile.mkdtemp())
         try:
             src = tmp / '原件'
             (src / '子目录').mkdir(parents=True)
-            make_docx(src / '好文件.docx')
-            make_docx(src / '子目录' / '扩展名写错.doc')          # 其实是 .docx
-            (src / '坏文件.docx').write_bytes(b'not a zip')
-            out = tmp / '结果'
-            dict_ = HERE.parent / '词典示例.csv'
-            code = redact.main(['--input', str(src), '--dict', str(dict_), '--output', str(out), '--convert-doc'])
-            self.assertEqual(code, 1)                                # 坏文件要处理
-            docs = sorted(p.relative_to(next(out.iterdir()) / '脱敏文件').as_posix()
-                          for p in (next(out.iterdir()) / '脱敏文件').rglob('*.docx'))
-            self.assertEqual(set(docs), {'子目录/扩展名写错.docx', '好文件.docx'})
-            report = (next(out.iterdir()) / '内部留存-勿外发' / '报告.md').read_text(encoding='utf-8')
-            self.assertIn('不是有效的 .docx', report)
-            self.assertIn('自动转换（扩展名更正）', report)
+            make_docx(src / '已是docx.docx')
+            make_docx(src / '子目录' / '扩展名写错.doc')          # 其实是 .docx：只更正扩展名，不需要转换工具
+            (src / '说明.pdf').write_bytes(b'%PDF')
+            out = tmp / '原件-docx'
+            self.assertEqual(convert.main(['--input', str(src), '--output', str(out)]), 0)
+            got = sorted(p.relative_to(out).as_posix() for p in out.rglob('*') if p.is_file())
+            self.assertEqual(got, ['子目录/扩展名写错.docx', '已是docx.docx'])
+            report = (tmp / '原件-docx-转换报告.md').read_text(encoding='utf-8')
+            self.assertIn('扩展名写错.doc（扩展名更正）', report)
+            self.assertIn('说明.pdf', report)
+            # 原件不变；再跑一次，已是最新的跳过
+            self.assertTrue((src / '子目录' / '扩展名写错.doc').exists())
+            self.assertEqual(convert.main(['--input', str(src), '--output', str(out)]), 0)
+            # 转换后目录不能放在原件目录里
+            with self.assertRaises(SystemExit):
+                convert.main(['--input', str(src), '--output', str(src / 'x')])
         finally:
             shutil.rmtree(tmp)
 

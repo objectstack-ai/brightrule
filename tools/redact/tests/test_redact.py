@@ -641,7 +641,8 @@ def _policy_docx(path: Path, fee: str = '100', with_images: bool = False) -> Non
     body = (p('华东示例集团文件') + p('华示字〔2025〕7号　签发人：王某某') + p('关于印发《差旅示例办法》的通知')
             + p('各部门：现印发给你们。') + p('华东示例集团综合办公室') + p('2025年3月1日')
             + tbl([['制度名称', '差旅示例办法', '制度层级', '三级'], ['制度编码', 'HD-CW-001', '生效日期', '2025年3月1日'],
-                   ['责任部门', '财务部', '制度类别', '财务类']])
+                   ['责任部门', '财务部', '制度类别', '财务类'], ['审议主体', '总经理办公会', '决议主体', '董事会'],
+                   ['协同部门', '人力资源部', '关联制度 / 文件', '《费用示例规定》、《考勤示例制度》']])
             + p('差旅示例办法') + p('第一章　总则') + p('第一条　为规范差旅，制定本办法。') + p('第二条　适用于全体员工。')
             + p('第二章　标准') + p(f'第四条　伙食补助每人每天{fee}元。') + p('第五条　本办法自2025年3月1日起施行。')
             + (IMAGE_P + CHART_P + MATH_P if with_images else '')
@@ -685,8 +686,15 @@ class PackageTest(unittest.TestCase):
         m = json.loads((folder / 'manifest.json').read_text(encoding='utf-8'))
         self.assertEqual(m['meta']['policy_no'], 'HD-CW-001')
         self.assertEqual(m['meta']['effective_date'], '2025-03-01')
-        self.assertEqual(m['meta']['version_no'], '华示字〔2025〕7号')
+        # 文号进 doc_no（系统里的「文号」字段），不再当版本号
+        self.assertEqual(m['meta']['doc_no'], '华示字〔2025〕7号')
+        self.assertNotIn('version_no', m['meta'])
+        self.assertEqual((m['meta']['policy_level'], m['meta']['review_body'], m['meta']['decision_body'],
+                          m['meta']['co_departments'], m['meta']['related_documents']),
+                         ('三级', '总经理办公会', '董事会', '人力资源部', '《费用示例规定》、《考勤示例制度》'))
         body, att = m['documents']
+        self.assertFalse(body['has_images'])
+        self.assertFalse(att['has_images'])
         text = (folder / '正文.md').read_text(encoding='utf-8')
         self.assertNotIn('华东示例集团', text)
         self.assertNotIn('# 附件（已拆分', text)
@@ -704,13 +712,19 @@ class PackageTest(unittest.TestCase):
         self.assertEqual(body['content_hash'], hashlib.sha256(text.encode('utf-8')).hexdigest())
         att_md = (folder / '附件1.md').read_text(encoding='utf-8')
         self.assertEqual(att['content_hash'], hashlib.sha256(att_md.encode('utf-8')).hexdigest())
-        self.assertEqual(att['attachment_class'], 'form')
+        self.assertNotIn('attachment_class', att)               # 系统里不再分附件类别
+        self.assertTrue(att['has_text'])
         self.assertEqual(att['title'], '出差申请单')            # 附件自己的名称，不拼制度名
         self.assertEqual(att['label'], '附件1')
         for f in pkg.rglob('*.docx'):
             self.assertNotIn('华东示例', docx_text(f), f)
         sheet = (pkg / '批次清单.csv').read_text(encoding='utf-8-sig')
         self.assertIn('缺条：第3条', sheet)
+        with (pkg / '批次清单.csv').open(encoding='utf-8-sig') as f:
+            [row] = list(csv.DictReader(f))
+        self.assertNotIn('版本号', row)
+        self.assertEqual((row['文号'], row['制度层级'], row['协同部门'], row['审议主体'], row['决议主体'], row['关联制度/文件']),
+                         ('华示字〔2025〕7号', '三级', '人力资源部', '总经理办公会', '董事会', '《费用示例规定》、《考勤示例制度》'))
         # 同一份原件再打包一次，附件原件的哈希不变（导入去重靠它）
         pkg2 = self.redact_and_pack()
         m2 = json.loads((pkg2 / '财务' / '差旅示例办法' / 'manifest.json').read_text(encoding='utf-8'))
@@ -736,6 +750,12 @@ class PackageTest(unittest.TestCase):
         self.assertNotIn('A=B', text)   # 公式里的文字没有经过脱敏，不输出
         docs = json.loads((folder / 'manifest.json').read_text(encoding='utf-8'))['documents']
         self.assertEqual([d['sort_no'] for d in docs], [0, 1])   # 只有图片的附件2 不导入
+        self.assertEqual([d['has_images'] for d in docs], [True, False])   # 正文含图片，附件1 不含
+        # 附件也传文件时，只有图片的附件2 以文件导入：没有文字，含图片
+        pkg_files = self.redact_and_pack('--files', 'attachments')
+        docs = json.loads((pkg_files / '财务' / '差旅示例办法' / 'manifest.json').read_text(encoding='utf-8'))['documents']
+        self.assertEqual([(d['sort_no'], d['has_text'], d['has_images'], d['md']) for d in docs[1:]],
+                         [(1, True, False, '附件1.md'), (2, False, True, None)])
         sheet = (pkg / '批次清单.csv').read_text(encoding='utf-8-sig')
         self.assertIn('含图片 2 处、图表 1 处、公式 1 处', sheet)
         self.assertIn('附件2 只有图片', sheet)
@@ -761,9 +781,8 @@ class PackageTest(unittest.TestCase):
         self.assertEqual(m['documents'][0]['content_hash'], hashlib.sha256(src.read_bytes()).hexdigest())
         self.assertIn('华东示例', docx_text(folder / '附件1.docx') + docx_text(folder / '正文.docx'))
 
-    def test_import_plan_is_idempotent_and_guards_current_versions(self):
+    def fake_api(self):
         import importer
-        pkg = self.redact_and_pack()
 
         class FakeApi(importer.Api):
             def __init__(self):
@@ -778,8 +797,6 @@ class PackageTest(unittest.TestCase):
 
             def create(self, obj, row):
                 row = {**row, 'id': self._id()}
-                if obj == 'brightrule_policy_version':
-                    row.setdefault('version_status', 'draft')
                 self.rows.setdefault(obj, []).append(row)
                 return row
 
@@ -787,6 +804,9 @@ class PackageTest(unittest.TestCase):
                 for r in self.rows[obj]:
                     if r['id'] == rid:
                         r.update(row)
+
+            def delete(self, obj, rid):
+                self.rows[obj] = [r for r in self.rows[obj] if r['id'] != rid]
 
             def upload(self, data, filename, mime=importer.DOCX_MIME):
                 fid = self._id()
@@ -796,25 +816,36 @@ class PackageTest(unittest.TestCase):
             def category_options(self):
                 return [('finance', '财务')]
 
-        api = FakeApi()
+        return FakeApi()
+
+    def test_import_writes_body_and_info_table_onto_the_policy_and_attachments_under_it(self):
+        import importer
+        pkg = self.redact_and_pack()
+        api = self.fake_api()
         row = importer.read_sheet(pkg)[0]
         rp = importer.plan_row(api, pkg, row, api.category_options())
         self.assertIsNone(rp.rejected)
         importer.apply_row(api, rp)
-        # 正文写在版本上，附件进附件表；不再有「版本文档」
-        self.assertNotIn('brightrule_policy_document', api.rows)
-        version = api.rows['brightrule_policy_version'][0]
-        self.assertIn('**第一条**', version['body_md'])
-        self.assertEqual([e['article'] for e in version['article_index']], ['第一条', '第二条', '第四条', '第五条'])
-        self.assertEqual(version['version_status'], 'draft')
-        [att_doc] = api.rows['brightrule_policy_attachment']
-        self.assertEqual((att_doc['label'], att_doc['title'], att_doc['attachment_class'], att_doc['sort_no']),
-                         ('附件1', '出差申请单', 'form', 1))
-        self.assertEqual(att_doc['policy_version'], version['id'])
-        self.assertNotIn('original_file', version)          # 默认只进 Markdown，不传文件
-        self.assertNotIn('original_file', att_doc)
+        # 没有版本：正文、制度信息表都写在制度上，附件挂在制度下（brightrule#45）
+        self.assertEqual(set(api.rows), {'brightrule_policy', 'brightrule_policy_attachment'})
+        [policy] = api.rows['brightrule_policy']
+        self.assertIn('**第一条**', policy['body_md'])
+        self.assertEqual([e['article'] for e in policy['article_index']], ['第一条', '第二条', '第四条', '第五条'])
+        self.assertEqual(policy['status'], 'draft')
+        self.assertEqual(policy['doc_no'], '华示字〔2025〕7号')        # 文号进「文号」，不进版本号
+        self.assertNotIn('version_no', policy)
+        self.assertEqual((policy['policy_level'], policy['co_departments'], policy['review_body'], policy['decision_body'],
+                          policy['related_documents'], policy['effective_date'], policy['category']),
+                         ('三级', '人力资源部', '总经理办公会', '董事会', '《费用示例规定》、《考勤示例制度》', '2025-03-01', 'finance'))
+        self.assertFalse(policy['has_images'])
+        self.assertNotIn('images_need_review', policy)                 # 人工勾选的，导入不碰
+        [att] = api.rows['brightrule_policy_attachment']
+        self.assertEqual((att['label'], att['title'], att['sort_no'], att['policy']), ('附件1', '出差申请单', 1, policy['id']))
+        for gone in ('policy_version', 'attachment_class', 'is_current'):
+            self.assertNotIn(gone, att)
+        self.assertNotIn('original_file', policy)          # 默认只进 Markdown，不传文件
+        self.assertNotIn('original_file', att)
         self.assertEqual(api.files, {})
-        self.assertEqual(api.rows['brightrule_policy'][0]['category'], 'finance')
         # 再来一次：无事可做
         self.assertEqual(importer.plan_row(api, pkg, row, []).steps, [])
         # Markdown 里有图片语法：拒绝整行
@@ -823,44 +854,87 @@ class PackageTest(unittest.TestCase):
         md_path.write_text(saved + '\n![流程](data:image/png;base64,AAAA)\n', encoding='utf-8')
         self.assertIn('图片', importer.plan_row(api, pkg, row, []).rejected)
         md_path.write_text(saved, encoding='utf-8')
-        # 早先正文也传了文件：换成默认打包后再导入，去掉正文文件；现行版本也可以（文字没变）
-        version['original_file'], version['content_hash'] = 'old-file', 'old-hash'
-        version['version_status'] = 'current'
+        # 早先正文也传了文件：换成默认打包后再导入，去掉正文文件；已发布的也可以
+        policy['original_file'], policy['content_hash'], policy['status'] = 'old-file', 'old-hash', 'published'
         rp = importer.plan_row(api, pkg, row, [])
         self.assertIsNone(rp.rejected)
         self.assertIn('去掉文件', ' '.join(rp.actions))
+        self.assertFalse(any('覆盖' in n for n in rp.notes))   # 正文没变
         importer.apply_row(api, rp)
-        self.assertIsNone(version['original_file'])
+        self.assertIsNone(policy['original_file'])
         self.assertEqual(importer.plan_row(api, pkg, row, []).steps, [])
-        # 设为现行后，内容变了就拒绝
-        api.rows['brightrule_policy_version'][0]['version_status'] = 'current'
-        _policy_docx(self.src / '财务' / '差旅示例办法.docx', fee='120')
+        # 修订：已发布的制度正文变了，直接覆盖（不保留旧正文），提示一句
+        _policy_docx(self.src / '财务' / '差旅示例办法.docx', fee='120', with_images=True)
         pkg2 = self.redact_and_pack()
         rp = importer.plan_row(api, pkg2, importer.read_sheet(pkg2)[0], [])
-        self.assertIn('已是现行', rp.rejected)
-        # 换版本号：新建版本
-        row2 = dict(importer.read_sheet(pkg2)[0], 版本号='华示字〔2025〕9号')
-        rp = importer.plan_row(api, pkg2, row2, [])
         self.assertIsNone(rp.rejected)
-        self.assertIn('新建版本', ' '.join(rp.actions))
+        self.assertTrue(any('覆盖' in n for n in rp.notes))
+        importer.apply_row(api, rp)
+        self.assertEqual(len(api.rows['brightrule_policy']), 1)
+        self.assertIn('120元', policy['body_md'])
+        self.assertTrue(policy['has_images'])                 # 含图片：按正文里的「（图片）」等标记
+        self.assertEqual(policy['status'], 'published')
         # 没有制度编号、没有生效日期：照样导入，按名称对应，重复导入不变
         row3 = dict(importer.read_sheet(pkg)[0], 制度编号='', 生效日期='', 制度名称='无编号示例办法')
         rp = importer.plan_row(api, pkg, row3, [])
         self.assertIsNone(rp.rejected)
-        self.assertIn('新建制度（草稿）', rp.actions)
+        self.assertIn('新建制度（草稿，含正文）', rp.actions)
         importer.apply_row(api, rp)
         made = [r for r in api.rows['brightrule_policy'] if r['title'] == '无编号示例办法']
         self.assertEqual(len(made), 1)
         self.assertNotIn('policy_no', made[0])
         self.assertNotIn('effective_date', made[0])
+        self.assertEqual([a['policy'] for a in api.rows['brightrule_policy_attachment']], [policy['id'], made[0]['id']])
         self.assertEqual(importer.plan_row(api, pkg, row3, []).steps, [])
         # 页面上补了编号和生效日期后再导入：仍对应同一份，补的不被清空
         made[0].update(policy_no='HD-XZ-009', effective_date='2025-03-01')
         rp = importer.plan_row(api, pkg, row3, [])
         self.assertEqual(rp.steps, [])
         self.assertEqual(made[0]['policy_no'], 'HD-XZ-009')
-        # 缺名称仍然拒绝
+        # 缺名称仍然拒绝；文号可以没有
         self.assertIn('制度名称', importer.plan_row(api, pkg, dict(row3, 制度名称=''), []).rejected)
+        self.assertIsNone(importer.plan_row(api, pkg, dict(row3, 文号=''), []).rejected)
+
+    def test_import_links_related_policies_only_on_an_exact_name(self):
+        import importer
+        pkg = self.redact_and_pack()
+        api = self.fake_api()
+        other = api.create('brightrule_policy', {'title': '考勤示例制度', 'status': 'published'})
+        api.create('brightrule_policy', {'title': '费用示例规定（试行）', 'status': 'published'})   # 名称不完全一致：不关联
+        row = importer.read_sheet(pkg)[0]
+        rp = importer.plan_row(api, pkg, row, [])
+        self.assertEqual(importer.link_related(api, [rp], apply=False), 1)   # 预演：新建的制度写入后才关联
+        importer.apply_row(api, rp)
+        self.assertEqual(importer.link_related(api, [rp], apply=True), 1)
+        policy = next(r for r in api.rows['brightrule_policy'] if r['title'] == '差旅示例办法')
+        self.assertEqual(policy['related_policies'], [other['id']])
+        self.assertEqual(policy['related_documents'], '《费用示例规定》、《考勤示例制度》')   # 原文照录，含库外的
+        self.assertEqual(importer.link_related(api, [rp], apply=True), 0)   # 再来一次：不变
+        self.assertEqual(importer.related_titles('《甲办法》、《乙规定》；《甲办法》'), ['甲办法', '乙规定'])
+        self.assertEqual(importer.related_titles('甲办法、乙规定\n丙细则'), ['甲办法', '乙规定', '丙细则'])
+        self.assertEqual(importer.related_titles('无'), [])
+        self.assertEqual(importer.ref_ids([{'id': 'a'}, 'b']), ['a', 'b'])
+        self.assertEqual(importer.ref_ids(None), [])
+
+    def test_publish_and_remove_work_on_the_policy(self):
+        import importer, publish, remove
+        pkg = self.redact_and_pack()
+        api = self.fake_api()
+        row = importer.read_sheet(pkg)[0]
+        importer.apply_row(api, importer.plan_row(api, pkg, row, []))
+        [policy] = api.rows['brightrule_policy']
+        mark, note, pid = publish.plan(api, pkg, row)
+        self.assertEqual((mark, pid), ('✓', policy['id']))
+        self.assertIn('草稿 → 已发布', note)
+        api.update('brightrule_policy', pid, {'status': 'published'})
+        self.assertEqual(publish.plan(api, pkg, row)[0], '·')
+        policy['status'] = 'abolished'
+        self.assertEqual(publish.plan(api, pkg, row)[:2], ('·', '已废止，不动'))
+        policy.update(status='draft', text_chars=0)
+        self.assertEqual(publish.plan(api, pkg, row)[0], '✗')        # 没有正文：导入没做完
+        api.create('brightrule_clause', {'policy': policy['id'], 'title': 't'})
+        steps = remove.plan(api, policy)
+        self.assertEqual([s[0] for s in steps], ['brightrule_clause', 'brightrule_policy'])   # 附件随制度删除
 
     def test_package_accepts_the_docs_folder_and_import_points_to_package(self):
         import importer, package
@@ -880,7 +954,7 @@ class PackageTest(unittest.TestCase):
               '# 正文\n\n**第一条** 为规范档案管理。\n\n**第二条** 本办法自印发之日起施行。\n')
         meta, missing = package.metadata(md, '示办〔2023〕24号 关于印发《示例档案管理办法》的通知')
         self.assertEqual(meta['title'], '示例档案管理办法')
-        self.assertEqual(meta['version_no'], '示办〔2023〕24号')
+        self.assertEqual(meta['doc_no'], '示办〔2023〕24号')
         self.assertEqual(meta['effective_date'], '2023-05-06')
         self.assertEqual(missing, ['制度编号'])
         self.assertIn('文件名', meta['_from'])

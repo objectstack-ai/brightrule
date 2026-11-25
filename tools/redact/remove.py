@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""删除制度：连同它的版本（含正文）、附件、条款、制度关系一起删掉。在本机运行，经系统的 HTTPS 接口删除。
+"""删除制度：连同它的正文、制度附件、条款一起删掉。在本机运行，经系统的 HTTPS 接口删除。
 
-系统不允许直接删还有版本、条款的制度（页面上删会提示失败），这个命令按「条款 → 版本（附件、关系随版本删除）
-→ 制度」的顺序删。
+系统不允许直接删还有条款的制度（页面上删会提示失败），这个命令按「条款 → 制度（正文在制度上，制度附件随制度删除）」
+的顺序删。
 
 用法：
     python3 remove.py --url https://<系统地址> --package 导入包/<时间>              # 预演：删除这个导入包导入的全部制度
@@ -55,31 +55,16 @@ def package_targets(api: Api, package: Path, apply: bool) -> List[Dict]:
     return list(found.values())
 
 
-def count_attachments(api: Api, version_id: str) -> int:
-    """版本下的附件数，只用于显示。附件子表（brightrule_policy_attachment）是后来的结构；还没部署它的环境里
-    同样的记录在旧的版本文档表（brightrule_policy_document）。两种都随版本级联删除，删除顺序不受影响。"""
-    for obj in ('brightrule_policy_attachment', 'brightrule_policy_document'):
-        try:
-            return len(api.find(obj, {'policy_version': version_id}, 'id'))
-        except ApiError as e:
-            if isinstance(e, AuthError) or 'not registered' not in str(e):
-                raise
-    return 0
-
-
 def plan(api: Api, policy: Dict) -> List[tuple]:
-    """删除顺序：条款（挂在制度上，限制删除）→ 版本（附件、以它为来源的关系随之删除）→ 制度。"""
+    """删除顺序：条款（挂在制度上，限制删除）→ 制度（制度附件随之删除）。"""
     clauses = api.find('brightrule_clause', {'policy': policy['id']}, 'id')
-    versions = api.find('brightrule_policy_version', {'policy': policy['id']}, 'id,version_no,version_status')
-    atts = sum(count_attachments(api, v['id']) for v in versions)
-    print(f'  {policy.get("title")}（{policy.get("policy_no") or "无编号"}）：版本 {len(versions)} 个、附件 {atts} 个、条款 {len(clauses)} 条')
-    return ([('brightrule_clause', c['id']) for c in clauses]
-            + [('brightrule_policy_version', v['id']) for v in versions]
-            + [('brightrule_policy', policy['id'])])
+    atts = api.find('brightrule_policy_attachment', {'policy': policy['id']}, 'id')
+    print(f'  {policy.get("title")}（{policy.get("policy_no") or "无编号"}）：附件 {len(atts)} 个、条款 {len(clauses)} 条')
+    return [('brightrule_clause', c['id']) for c in clauses] + [('brightrule_policy', policy['id'])]
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    ap = argparse.ArgumentParser(description='删除制度及其版本、附件、条款')
+    ap = argparse.ArgumentParser(description='删除制度及其正文、制度附件、条款')
     ap.add_argument('--url', required=True, help='系统地址')
     ap.add_argument('--package', type=Path, help='删除这个导入包（导入包/<时间>）导入的全部制度')
     ap.add_argument('--samples', action='store_true', help='删除开发环境自带的 5 份示例制度')

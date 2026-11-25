@@ -12,8 +12,8 @@
     <run>/内部留存-勿外发/文件清单.json   原件与脱敏文件的对应、复查是否通过（脱敏工具写的）
     原件目录（可选）            --files original 或 --meta original 时才读
 写 <output>/<时间>/：
-    批次清单.csv     每份制度一行：制度编号、名称、版本号、生效日期……人工核对后导入以它为准
-    检查报告.md      条号缺漏、重复、「之一」，附件分类，取不到的字段，被拒绝的文件
+    批次清单.csv     每份制度一行：制度编号、名称、文号、生效日期、制度信息表的各栏……人工核对后导入以它为准
+    检查报告.md      条号缺漏、重复、「之一」，附件，含图片，取不到的字段，被拒绝的文件
     <每份制度>/       manifest.json、正文.md、附件N.md（按 --files 还有 附件N.docx、正文.docx）
 
 --files 决定哪些文件上传到系统的「原件」字段：
@@ -22,12 +22,13 @@
     redacted             正文、附件都传脱敏后的 docx；
     original             都传原件：导入包含原文，和「内部留存-勿外发」一样不能外发、不能进 Git。
 
-条号索引、字数、token 估算、内容哈希的口径与应用一致（src/data/document-text.ts、docs/policy-document.md）：
+条号索引、字数、token 估算、内容哈希的口径与应用一致（src/data/document-text.ts、src/objects/policy.object.ts）：
 - 字数 = 脱敏正文的 Unicode 码点数（含 Markdown 标记）；token = ⌈字数 ÷ 1.5⌉；
 - 条号索引每条 {article, chapter, redacted: [起, 止)}，偏移按码点计，起点在 **第X条** 标记处，
   终点在下一条或下一个标题之前，不含末尾空行；没有章时 chapter 为 null；
 - 内容哈希 = 上传的那个文件字节的 SHA-256（十六进制小写）；不传文件的取脱敏 Markdown（UTF-8）的 SHA-256。
-- 图片、图表、SmartArt、公式、嵌入对象的内容不在 Markdown 里（只留标记），按份统计写进批次清单「问题」一栏和检查报告。
+- 图片、图表、SmartArt、公式、嵌入对象的内容不在 Markdown 里（只留标记），按份统计写进批次清单「问题」一栏和检查报告；
+  正文、每个附件各记一个「含图片」（has_images），导入时写进系统的「含图片」字段。
 """
 from __future__ import annotations
 
@@ -60,14 +61,19 @@ CHAPTER = re.compile(r'^## (.+)$', re.M)
 SECTION = re.compile(r'^# (.+)$', re.M)
 DATE_CN = re.compile(r'((?:19|20)\d{2})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日')
 EFFECTIVE = re.compile(r'自\s*((?:19|20)\d{2}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日)\s*起\s*(?:施行|实行|执行|生效)')
+# 制度信息表的栏目 → 元数据键。栏目名比较时去掉空白和「/」「／」「、」，「关联制度 / 文件」「关联制度/文件」都认
 INFO_KEYS = {
     'title': ('制度名称', '文件名称'),
     'policy_no': ('制度编码', '制度编号', '文件编号', '制度代码'),
+    'doc_no': ('文号', '发文字号', '发文文号', '制度文号'),
     'category': ('制度类别', '制度分类', '类别'),
-    'level': ('制度层级', '层级', '制度级别'),
+    'policy_level': ('制度层级', '层级', '制度级别'),
     'effective_date': ('生效日期', '施行日期', '实施日期'),
     'department': ('责任部门', '归口部门', '主责部门', '归口管理部门'),
     'co_departments': ('协同部门', '配合部门'),
+    'review_body': ('审议主体', '审议机构'),
+    'decision_body': ('决议主体', '决策主体', '审批主体'),
+    'related_documents': ('关联制度文件', '关联制度', '关联文件', '相关制度', '相关制度文件'),
 }
 ATTACH_LISTING = re.compile(r'\n# 附件（已拆分为单独文件）\n.*\Z', re.S)
 
@@ -182,6 +188,11 @@ def sections(md: str) -> Dict[str, str]:
     return out
 
 
+def info_key(name: str) -> str:
+    """制度信息表的栏目名，去掉空白、「/」「／」「、」和末尾的冒号后再比。"""
+    return re.sub(r'[\s/／、]', '', name or '').rstrip(':：')
+
+
 def info_table(text: str) -> Dict[str, str]:
     """Markdown 表格里「字段名 | 值」成对出现的格子。"""
     pairs: Dict[str, str] = {}
@@ -190,7 +201,7 @@ def info_table(text: str) -> Dict[str, str]:
             continue
         cells = [c.strip().replace('<br>', ' ') for c in line.strip().strip('|').split('|')]
         for i in range(len(cells) - 1):
-            key = re.sub(r'\s', '', cells[i])
+            key = info_key(cells[i])
             if key and cells[i + 1] and key not in pairs and len(key) <= 8:
                 pairs[key] = cells[i + 1]
     return pairs
@@ -217,8 +228,8 @@ def metadata(md: str, stem: str = '') -> Tuple[Dict[str, str], List[str]]:
     meta: Dict[str, str] = {}
     for key, names in INFO_KEYS.items():
         for n in names:
-            if table.get(n):
-                meta[key] = table[n]
+            if table.get(info_key(n)):
+                meta[key] = table[info_key(n)]
                 break
     fallbacks: List[str] = []
     if not meta.get('title') and sec.get('正文标题'):
@@ -230,13 +241,17 @@ def metadata(md: str, stem: str = '') -> Tuple[Dict[str, str], List[str]]:
         if t:
             meta['title'] = t
             fallbacks.append('制度名称取自通知标题或文件名')
-    m = DOC_NO_RX.search(notice)
-    meta['version_no'] = re.sub(r'\s', '', m.group(0)) if m else ''
-    if not meta['version_no']:
+    # 文号：制度信息表 →「发文通知」里的文号 → 文件名
+    if meta.get('doc_no'):
+        meta['doc_no'] = re.sub(r'\s', '', meta['doc_no'])
+    else:
+        m = DOC_NO_RX.search(notice)
+        meta['doc_no'] = re.sub(r'\s', '', m.group(0)) if m else ''
+    if not meta['doc_no']:
         m = DOC_NO_RX.search(stem)
         if m:
-            meta['version_no'] = re.sub(r'\s', '', m.group(0))
-            fallbacks.append('版本号（文号）取自文件名')
+            meta['doc_no'] = re.sub(r'\s', '', m.group(0))
+            fallbacks.append('文号取自文件名')
     colophon = sec.get('版记', '')
     dates = DATE_CN.findall(colophon) or DATE_CN.findall(notice)
     if dates:
@@ -257,7 +272,7 @@ def metadata(md: str, stem: str = '') -> Tuple[Dict[str, str], List[str]]:
             fallbacks.append('「自印发之日起施行」，生效日期取发文日期')
     if fallbacks:
         meta['_from'] = '；'.join(fallbacks)
-    missing = [label for key, label in (('policy_no', '制度编号'), ('title', '制度名称'), ('version_no', '版本号（文号）'),
+    missing = [label for key, label in (('policy_no', '制度编号'), ('title', '制度名称'), ('doc_no', '文号'),
                                         ('effective_date', '生效日期')) if not meta.get(key)]
     return meta, missing
 
@@ -268,19 +283,17 @@ def non_text_counts(md: str) -> Dict[str, int]:
     return {name: md.count(mark) for mark, name in NON_TEXT_MARKERS.items() if mark in md}
 
 
-def attachment_class(md: str) -> str:
-    """表格里空格子占 40% 以上 → 表单（「项目｜空格」成对排列的表正好一半空）；没有文字（只有图片等）→ 仅原件；
-    其余 → 规范性。"""
+def has_images(md: str) -> bool:
+    """Markdown 里有没有图片、图表、SmartArt、公式、嵌入对象（转换时写成的「（图片）」等标记）。"""
+    return bool(non_text_counts(md))
+
+
+def has_words(md: str) -> bool:
+    """标题行之外有没有文字：只有图片等标记的附件没有。系统里不再分「规范性 / 表单 / 仅原件」（brightrule#45）。"""
     body = '\n'.join(l for l in md.splitlines() if not l.startswith('# '))
     for mark in NON_TEXT_MARKERS:
         body = body.replace(mark, '')
-    if not re.search(r'[\w一-鿿]', body):
-        return 'original'
-    cells = [c.strip() for l in body.splitlines() if l.startswith('|') and not set(l) <= set('|-: ')
-             for c in l.strip().strip('|').split('|')]
-    if cells and sum(1 for c in cells if not c) / len(cells) >= 0.4:
-        return 'form'
-    return 'normative'
+    return bool(re.search(r'[\w一-鿿]', body))
 
 
 ATT_FILE = re.compile(r'^附件(\d+)')
@@ -348,7 +361,7 @@ def pack_one(entry: Dict[str, object], docs: Path, originals: Optional[Path], ou
     packed.body_tokens = int(stats['text_tokens'])
     documents = [{'doc_kind': 'body', 'sort_no': 0, 'title': meta.get('title') or red_docx.stem,
                   'md': '正文.md', 'file': body_file, 'article_index': index,
-                  'content_hash': body_hash, **stats}]
+                  'content_hash': body_hash, 'has_images': has_images(body), **stats}]
 
     # 附件：脱敏件按「附件N-标题.md / .docx」配对；用原件时从原件里按同一规则拆出对应的附件
     att_dir = red_docx.parent / f'{red_docx.stem}-附件'
@@ -374,9 +387,9 @@ def pack_one(entry: Dict[str, object], docs: Path, originals: Optional[Path], ou
         md = red_md_by_no[no].read_text(encoding='utf-8')
         for k, v in non_text_counts(md).items():
             images[k] = images.get(k, 0) + v
-        cls = attachment_class(md)
+        words = has_words(md)
         if files == 'none':
-            if cls == 'original':
+            if not words:
                 packed.problems.append(f'附件{no} 只有图片等、没有文字：不导入，需要时请把内容写成文字')
                 continue
             data = None
@@ -399,16 +412,18 @@ def pack_one(entry: Dict[str, object], docs: Path, originals: Optional[Path], ou
             label = orig_by_no[no].label
         else:
             a_title = attachment_title(head.group(2) or '') if head else ''
-        # 标题只写附件自己的名称（原文怎么叫就怎么叫），不再拼制度全名：制度、版本由所属关系带出，
+        # 标题只写附件自己的名称（原文怎么叫就怎么叫），不再拼制度全名：所属制度由主从关系带出，
         # 拼上制度名会让按制度名查找时命中附件
-        att = {'doc_kind': 'attachment', 'sort_no': no, 'attachment_class': cls, 'label': label,
+        att = {'doc_kind': 'attachment', 'sort_no': no, 'label': label,
                'title': a_title or label,
-               'md': f'附件{no}.md' if cls != 'original' else None,
+               'md': f'附件{no}.md' if words else None,
                'file': f'附件{no}.docx' if data is not None else None,
                'article_index': None, 'content_hash': sha256(data if data is not None else md.encode('utf-8')),
-               **(text_stats(md) if cls != 'original' else text_stats(''))}
+               # 只有标题、没有文字的附件，内容只能是图片等（转换时标记可能落在正文里），也算含图片
+               'has_images': has_images(md) or not words, **(text_stats(md) if words else text_stats(''))}
         documents.append(att)
-        packed.attachments.append({'no': no, 'label': label, 'title': a_title, 'class': cls, 'tokens': att['text_tokens']})
+        packed.attachments.append({'no': no, 'label': label, 'title': a_title, 'has_text': words,
+                                   'has_images': att['has_images'], 'tokens': att['text_tokens']})
     if images:
         packed.problems.append('含' + '、'.join(f'{k} {v} 处' for k, v in images.items()) +
                                '：这些内容不在 Markdown 里，问询时模型看不到；重要的请对照原件写成文字')
@@ -423,9 +438,9 @@ def pack_one(entry: Dict[str, object], docs: Path, originals: Optional[Path], ou
 FILES_LABEL = {'none': '不传文件，正文、附件只进脱敏 Markdown',
                'attachments': '正文不传文件（只进脱敏 Markdown），附件传脱敏后的 docx',
                'redacted': '正文、附件都传脱敏后的 docx（不含原文）', 'original': '原件'}
-CLASS_LABEL = {'normative': '规范性', 'form': '表单', 'original': '仅原件'}
-SHEET_COLUMNS = ['导入', '包内目录', '制度编号', '制度名称', '版本号', '生效日期', '发文日期', '制度类别', '制度层级',
-                 '发文单位', '归口部门', '正文token', '附件', '问题']
+# 「协同部门」「审议主体」「决议主体」「关联制度/文件」照录制度信息表；导入时写进制度，「关联制度/文件」里与库内制度同名的再自动关联
+SHEET_COLUMNS = ['导入', '包内目录', '制度编号', '制度名称', '文号', '生效日期', '发文日期', '制度类别', '制度层级',
+                 '发文单位', '归口部门', '协同部门', '审议主体', '决议主体', '关联制度/文件', '正文token', '附件', '问题']
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -467,10 +482,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         for p in ok:
             m = p.meta
             issues = ([f'缺{x}' for x in p.missing] + p.problems)
-            wr.writerow(['是', p.folder, m.get('policy_no', ''), m.get('title', ''), m.get('version_no', '') or 'V1.0',
-                         m.get('effective_date', ''), m.get('issued_date', ''), m.get('category', ''), m.get('level', ''),
-                         m.get('issuing_unit', ''), m.get('department', ''), p.body_tokens, len(p.attachments),
-                         '；'.join(issues)])
+            wr.writerow(['是', p.folder, m.get('policy_no', ''), m.get('title', ''), m.get('doc_no', ''),
+                         m.get('effective_date', ''), m.get('issued_date', ''), m.get('category', ''),
+                         m.get('policy_level', ''), m.get('issuing_unit', ''), m.get('department', ''),
+                         m.get('co_departments', ''), m.get('review_body', ''), m.get('decision_body', ''),
+                         m.get('related_documents', ''), p.body_tokens, len(p.attachments), '；'.join(issues)])
     write_report(out_root / '检查报告.md', packed, args)
     print(f'打包 {len(ok)} 份制度，拒绝 {len(packed) - len(ok)} 份；附件 {sum(len(p.attachments) for p in ok)} 个。')
     with_images = [p for p in ok if p.images]
@@ -502,7 +518,7 @@ def write_report(path: Path, packed: List[Packed], args) -> None:
              f'- 上传的文件：{FILES_LABEL[args.files]}',
              f'- 元数据取自：{"原文" if args.meta == "original" else "脱敏后的文字"}',
              f'- 打包 {len(ok)} 份，拒绝 {len(packed) - len(ok)} 份', '',
-             '批次清单里「问题」一栏不为空的，请对照原件确认；制度名称、版本号必须有才能导入；制度编号、生效日期原文没有的可以留空。', '']
+             '批次清单里「问题」一栏不为空的，请对照原件确认；制度名称必须有才能导入；制度编号、文号、生效日期原文没有的可以留空。', '']
     rej = [p for p in packed if p.rejected]
     if rej:
         lines += ['## 拒绝打包', ''] + [f'- {p.folder or p.source}：{p.rejected}' for p in rej] + ['']
@@ -517,14 +533,16 @@ def write_report(path: Path, packed: List[Packed], args) -> None:
         flag = '⚠ 需确认' if (p.missing or p.problems) else '✓'
         lines += [f'## {p.folder} — {flag}', '',
                   f'- 制度名称：{p.meta.get("title", "（未取到）")}；编号：{p.meta.get("policy_no", "（未取到）")}；'
-                  f'版本号：{p.meta.get("version_no") or "（未取到，清单里预填 V1.0）"}；生效日期：{p.meta.get("effective_date", "（未取到）")}',
+                  f'文号：{p.meta.get("doc_no") or "（未取到）"}；生效日期：{p.meta.get("effective_date", "（未取到）")}',
                   f'- 正文约 {p.body_tokens:,} token' + ('（超过 1.2 万，问这份制度时会改为段落检索）' if p.body_tokens > 12000 else '')]
         if p.missing:
             lines.append('- 缺字段：' + '、'.join(p.missing))
         for pr in p.problems:
             lines.append(f'- {pr}')
         for a in p.attachments:
-            lines.append(f"- {a.get('label') or '附件' + str(a['no'])}：{a['title'] or '（无标题）'} → {CLASS_LABEL[a['class']]}，约 {a['tokens']:,} token")
+            lines.append(f"- {a.get('label') or '附件' + str(a['no'])}：{a['title'] or '（无标题）'}，"
+                         + (f"约 {a['tokens']:,} token" if a['has_text'] else '没有文字（只传文件）')
+                         + ('，含图片' if a['has_images'] else ''))
         lines.append('')
     path.write_text('\n'.join(lines), encoding='utf-8')
 

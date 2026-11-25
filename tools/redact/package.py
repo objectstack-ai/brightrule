@@ -47,7 +47,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from docx2md import DOC_NO_RX, NON_TEXT_MARKERS, attachment_docx, document_markdown, split_document, _parse  # noqa: E402
+from docx2md import (DOC_NO_RX, NON_TEXT_MARKERS, attachment_docx, document_markdown, non_text_counts,  # noqa: E402
+                     split_document, _parse)
 
 CHARS_PER_TOKEN = 1.5
 ARTICLE = re.compile(r'^\*\*(第[零〇一二三四五六七八九十百千0-9]+条(?:之[一二三四五六七八九十]+)?)\*\*', re.M)
@@ -278,13 +279,9 @@ def metadata(md: str, stem: str = '') -> Tuple[Dict[str, str], List[str]]:
 
 
 # ── 附件 ──────────────────────────────────────────────────────────────────
-def non_text_counts(md: str) -> Dict[str, int]:
-    """Markdown 里没转成文字的内容（图片、图表……）各有几处。"""
-    return {name: md.count(mark) for mark, name in NON_TEXT_MARKERS.items() if mark in md}
-
-
 def has_images(md: str) -> bool:
-    """Markdown 里有没有图片、图表、SmartArt、公式、嵌入对象（转换时写成的「（图片）」等标记）。"""
+    """Markdown 里有没有图片、图表、SmartArt、公式、嵌入对象（转换时写成的「（图片）」等标记）。
+    和脱敏时的「非文字内容统计」同一个口径（docx2md.non_text_counts）：统计里有这个文件（正文或附件），这里就是含图片。"""
     return bool(non_text_counts(md))
 
 
@@ -329,7 +326,8 @@ def pack_one(entry: Dict[str, object], docs: Path, originals: Optional[Path], ou
         packed.rejected = '没有脱敏后的 .md（脱敏时用了 --no-md？）'
         return packed
     parts = None
-    if originals is not None:
+    ocr = bool(entry.get('ocr'))   # 扫描版 PDF：只有脱敏后的 .md，没有 docx
+    if originals is not None and not ocr:
         src = originals / source
         if not src.exists():
             packed.rejected = f'原件目录里找不到 {source}'
@@ -344,14 +342,16 @@ def pack_one(entry: Dict[str, object], docs: Path, originals: Optional[Path], ou
     if meta.get('_from'):
         packed.problems.append('请核对：' + meta.pop('_from'))
     index = article_index(body)
-    packed.problems = article_problems(index)
+    packed.problems += article_problems(index)
+    if ocr:
+        packed.problems.insert(0, '扫描件 OCR 识别：可能有错字、漏脱敏，导入前请人工核对正文')
     if not index:
         packed.problems.append('没有识别到「第X条」：作答时只能整份或按段落检索，答复无法引用到条')
 
     folder = out_root / packed.folder
     folder.mkdir(parents=True, exist_ok=True)
     (folder / '正文.md').write_text(body, encoding='utf-8')
-    if files in ('none', 'attachments'):
+    if files in ('none', 'attachments') or ocr:
         body_file, body_hash = None, sha256(body.encode('utf-8'))
     else:
         body_bytes = (originals / source).read_bytes() if files == 'original' else red_docx.read_bytes()

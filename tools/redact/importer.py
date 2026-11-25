@@ -21,6 +21,7 @@
     - 制度名称缺失，这一行拒绝；制度编号、文号、生效日期等可以为空（原文没有就不填，导入后在页面上补；空值不会覆盖页面上补的）；
     - 「图片待核对」是人工勾选的，导入不动它；
     - 新建的制度是草稿；核对后用 publish 命令或在页面上发布。
+    - 写入时在导入包里留 导入记录.json（按系统地址分开）：每份制度的 id、是不是这个包新建的；remove --package 按它删。
 认证（三选一）：
     --login                    运行时输入账号、密码登录（密码不回显、不保存）。上传文件只认登录会话；
                                只能单点登录的环境没有密码，用 BRIGHTRULE_API_KEY（默认导入包不传文件，够用）；
@@ -415,20 +416,79 @@ def plan_row(api: Api, package: Path, row: Dict[str, str], options: List[Tuple[s
     return rp
 
 
-def apply_row(api: Api, rp: RowPlan) -> None:
+# ── 导入记录 ───────────────────────────────────────────────────────────────
+RECORD_FILE = '导入记录.json'
+
+
+def _url_key(url: str) -> str:
+    return url.rstrip('/')
+
+
+def load_record(package: Path, url: str) -> Dict[str, Dict]:
+    """这个导入包写进某个系统后留下的记录：{包内目录: {policy_id, created_policy, title, policy_no}}。
+    按系统地址分开存，同一个包导进本地和云环境互不干扰。remove --package 有记录时直接按 id 删。"""
+    try:
+        data = json.loads((package / RECORD_FILE).read_text(encoding='utf-8'))
+    except (FileNotFoundError, ValueError):
+        return {}
+    return data.get(_url_key(url), {})
+
+
+def save_record(package: Path, url: str, entries: Dict[str, Dict]) -> None:
+    path = package / RECORD_FILE
+    try:
+        data = json.loads(path.read_text(encoding='utf-8'))
+    except (FileNotFoundError, ValueError):
+        data = {}
+    if entries:
+        data[_url_key(url)] = entries
+    else:
+        data.pop(_url_key(url), None)
+    tmp = path.with_suffix('.tmp')
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding='utf-8')
+    tmp.replace(path)
+
+
+def record_row(entries: Dict[str, Dict], rp: 'RowPlan', ids: Tuple[Optional[str], bool]) -> None:
+    """记下这一行在系统里的制度 id。「新建」以第一次导入为准：重跑时制度已存在，但仍是这个包建的。"""
+    policy_id, created_policy = ids
+    if not policy_id:
+        return
+    old = entries.get(rp.folder, {})
+    same = old.get('policy_id') == policy_id
+    entries[rp.folder] = {
+        'policy_id': policy_id,
+        'created_policy': bool(created_policy or (same and old.get('created_policy'))),
+        'title': rp.title, 'policy_no': rp.policy_no,
+    }
+
+
+def apply_row(api: Api, rp: RowPlan) -> Tuple[Optional[str], bool]:
+    """按计划写入，返回（制度 id, 是否新建了制度）。"""
     def with_file(fields: Dict, original: Optional[Path], title: str) -> Dict:
         fields = dict(fields)
         if original is not None:
             fields['original_file'] = api.upload(Path(original).read_bytes(), f'{title}.docx')
         return fields
 
+    try:
+        _apply_steps(api, rp, with_file, ids := [rp.policy_id, False])
+    except ApiError as e:
+        e.partial = tuple(ids)   # 中途失败：已经建好的制度也要记下，remove 才删得掉
+        raise
+    return tuple(ids)
+
+
+def _apply_steps(api: Api, rp: RowPlan, with_file, ids: List) -> None:
+    """逐步写入；ids = [制度 id, 新建了制度]，边写边更新（rp.policy_id 同步，附件和相关制度都挂在它上面）。"""
     for step in rp.steps:
         kind = step[0]
         if kind == 'create_policy':
-            rp.policy_id = api.create('brightrule_policy', with_file(step[1], step[2], f'{rp.title} 正文'))['id']
+            rp.policy_id = ids[0] = api.create('brightrule_policy', with_file(step[1], step[2], f'{rp.title} 正文'))['id']
+            ids[1] = True
         elif kind == 'update_policy':
             api.update('brightrule_policy', step[1], with_file(step[2], step[3], f'{rp.title} 正文'))
-            rp.policy_id = step[1]
+            rp.policy_id = ids[0] = step[1]
         elif kind == 'create_attachment':
             fields = with_file(step[1], step[2], f"{step[1]['label']} {step[1]['title']}")
             api.create('brightrule_policy_attachment', {**fields, 'policy': rp.policy_id})
@@ -489,6 +549,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     rows = [r for r in read_sheet(package) if r.get('导入', '是') == '是']
     print(('写入' if args.apply else '预演（不写入）') + f'：{len(rows)} 份制度 → {args.url}')
     plans: List[RowPlan] = []
+    record = load_record(package, args.url) if args.apply else {}
     progress = Progress(len(rows))
     for row in rows:
         try:
@@ -498,15 +559,22 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         except ApiError as e:
             rp = RowPlan(row.get('包内目录', ''), row.get('制度编号', ''), row.get('制度名称', ''), row.get('文号', ''),
                          rejected=f'查询系统失败：{e}')
+        if args.apply and not rp.rejected and not rp.steps and rp.policy_id:
+            record_row(record, rp, (rp.policy_id, False))   # 无变化：照样记下 id
+            save_record(package, args.url, record)
         if args.apply and not rp.rejected and rp.steps:
             try:
-                apply_row(api, rp)
+                record_row(record, rp, apply_row(api, rp))
+                save_record(package, args.url, record)
             except AuthError as e:
                 print(f'  ✗ {rp.folder}\n      写入中断：{e}')
                 hint = ('API Key 不能上传文件：请改用 --login（输入账号密码）重跑。' if api.mode == 'api_key'
                         else '登录已失效或没有权限：请重新 --login 后重跑。')
                 raise SystemExit(f'凭证被拒绝，整批停止。{hint}已写入的部分保留，重跑会接着做，不会重复。')
             except ApiError as e:
+                if getattr(e, 'partial', None):
+                    record_row(record, rp, e.partial)
+                    save_record(package, args.url, record)
                 rp.rejected = f'写入中断：{e}（已写入的部分保留；修正后重跑会接着做）'
         plans.append(rp)
         mark = '✗' if rp.rejected else ('·' if not rp.steps else '✓')

@@ -15,7 +15,8 @@ export const Clause = ObjectSchema.create({
   pluralLabel: '条款',
   icon: 'list-ordered',
   nameField: 'title',
-  description: '按章/条拆分的条文，AI 问询从这里检索并引用出处',
+  description:
+    '按条拆分的条文（旧模型，将下线）。导入的制度没有条款记录，这里查不到不代表制度没有内容；制度正文以版本文档 brightrule_policy_document 的 body_md_redacted 为准',
 
   fieldGroups: [{ key: 'details', label: '条款' }],
 

@@ -32,7 +32,8 @@ export const PolicyDocument = ObjectSchema.create({
   pluralLabel: '版本文档',
   icon: 'file-text',
   nameField: 'title',
-  description: '制度版本的正文与附件：原件文件（员工看）与脱敏正文（AI 读）',
+  description:
+    '制度正文全文所在：每个版本一条正文（doc_kind = body）和若干附件。问制度时按 policy = 制度 id、is_current = true 查询，读 body_md_redacted；规范性附件（attachment_class = normative）也是正文的一部分',
 
   // Quick search matches the title only: the redacted body is long, and a
   // type-default search would scan it on every keystroke.
@@ -70,7 +71,7 @@ export const PolicyDocument = ObjectSchema.create({
       label: '附件类别',
       group: 'basic',
       requiredWhen: "record.doc_kind == 'attachment'",
-      description: '规范性附件并入全文交给 AI；表单与仅原件的附件不发给 AI',
+      description: 'normative 规范性附件与正文同等效力，一起读；form 表单、original 仅原件不作答复依据',
       options: [
         { label: '规范性（并入全文）', value: 'normative' },
         { label: '表单（交给用户）', value: 'form' },
@@ -78,19 +79,24 @@ export const PolicyDocument = ObjectSchema.create({
       ],
     }),
     sort_no: Field.number({ label: '序号', scale: 0, min: 0, group: 'basic', description: '正文为 0，附件依次为 1、2…' }),
-    is_current: Field.boolean({ label: '现行', defaultValue: false, group: 'basic', description: '随所属版本的状态自动维护' }),
+    is_current: Field.boolean({
+      label: '现行',
+      defaultValue: false,
+      group: 'basic',
+      description: 'true = 属于现行版本，作答只用这些；随所属版本的状态自动维护',
+    }),
 
     original_file: Field.file({ label: '原件（docx / PDF）', group: 'content' }),
     body_md_redacted: Field.markdown({
       label: '脱敏正文',
       group: 'content',
       requiredWhen: "record.doc_kind == 'body' || record.attachment_class == 'normative'",
-      description: 'AI 读取的唯一正文来源；由 tools/redact 离线脱敏生成',
+      description: '制度正文全文（Markdown，已脱敏），条文以 **第X条** 开头、章节为 ## 标题；AI 作答的唯一正文来源',
     }),
     article_index: Field.json({
       label: '条号索引',
       group: 'content',
-      description: '每一条：{ article, chapter, redacted: [起, 止] }，偏移按脱敏正文的字符计',
+      description: '每一条：{ article, chapter, redacted: [起, 止] }，偏移按脱敏正文的码点计；作答时直接读 body_md_redacted 即可',
     }),
 
     has_text: Field.boolean({ label: '有文本', defaultValue: false, group: 'import' }),

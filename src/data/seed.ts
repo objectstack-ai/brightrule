@@ -2,6 +2,7 @@ import { defineSeed, seedFile } from '@objectstack/spec/data';
 import { Policy } from '../objects/policy.object.js';
 import { PolicyVersion } from '../objects/policy-version.object.js';
 import { PolicyDocument } from '../objects/policy-document.object.js';
+import { PolicyRelation } from '../objects/policy-relation.object.js';
 import { Clause } from '../objects/clause.object.js';
 import { assembleBody, textStats } from './document-text.js';
 
@@ -171,4 +172,45 @@ const documents = defineSeed(PolicyDocument, {
   ],
 });
 
-export const BrightRuleSeedData = [policies, versions, documents, clauses];
+// ── 制度关系 ────────────────────────────────────────────────────────────────
+// Links from a version to other policies. `from_policy` is left to the
+// relation hook (filled from the version). One target is outside the library
+// (to_policy empty, named only by to_title), one relation is unconfirmed — it
+// shows in 待确认关系 — and one links two library policies. All names are the
+// synthetic sample policies above or invented titles.
+const relations = defineSeed(PolicyRelation, {
+  externalId: ['from_version', 'relation_type', 'to_title'],
+  records: [
+    {
+      // Outside the library: only the name is known.
+      from_version: T3,
+      relation_type: 'cites',
+      to_title: '《费用报销管理规定》',
+      from_articles: '第十一条',
+      confirmed: true,
+      source: 'manual',
+    },
+    {
+      // Two library policies.
+      from_version: T3,
+      relation_type: 'supplements',
+      to_policy: L,
+      to_title: `《${L}》`,
+      from_articles: '第八条',
+      confirmed: true,
+      source: 'manual',
+    },
+    {
+      // Extracted on import, waiting for a maintainer.
+      from_version: `${C} V2.0`,
+      relation_type: 'cites',
+      to_policy: G,
+      to_title: `《${G}》`,
+      from_articles: '第十五条',
+      confirmed: false,
+      source: 'extracted',
+    },
+  ],
+});
+
+export const BrightRuleSeedData = [policies, versions, documents, clauses, relations];

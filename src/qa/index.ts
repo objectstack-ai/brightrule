@@ -3,6 +3,7 @@ import { KeywordKnowledgePlugin } from './keyword-adapter.js';
 import { policyClauseKnowledgeSource, policyQaAdapter } from './knowledge-source.js';
 import { PolicyQaPlugin } from './policy-qa-plugin.js';
 import { ANSWER_QUESTION_FUNCTION, answerQuestion, QuestionAnswerHook } from './question-answer.hook.js';
+import { PolicyRelationHook } from './policy-relation.hook.js';
 import { ClauseCurrentHook, PolicyDocumentHook, VersionCurrentHook } from './version-current.hook.js';
 import { KnowledgeVectorPlugin } from './vector/plugin.js';
 
@@ -23,8 +24,11 @@ export function policyQaPlugins(): unknown[] {
   ];
 }
 
-/** Lifecycle hooks: answer a question on save; keep clause and document currency in step with versions. */
-export const policyQaHooks = [QuestionAnswerHook, VersionCurrentHook, ClauseCurrentHook, PolicyDocumentHook];
+/**
+ * Lifecycle hooks: answer a question on save; keep clause and document currency
+ * in step with versions; keep policy relations consistent with their version.
+ */
+export const policyQaHooks = [QuestionAnswerHook, VersionCurrentHook, ClauseCurrentHook, PolicyDocumentHook, PolicyRelationHook];
 
 /** Named functions the hooks reference (the stack's `functions` map). */
 export const policyQaFunctions = { [ANSWER_QUESTION_FUNCTION]: answerQuestion };

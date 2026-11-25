@@ -9,3 +9,4 @@ export { default as policyVersion } from './policy-version.view';
 export { default as clause } from './clause.view';
 export { default as question } from './question.view';
 export { default as policyDocument } from './policy-document.view';
+export { default as policyRelation } from './policy-relation.view';

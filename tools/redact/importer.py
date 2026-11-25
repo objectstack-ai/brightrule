@@ -16,13 +16,17 @@
     - 只读导入包；路径里有「内部留存」的一律拒绝；
     - 制度名称、版本号缺任何一项，这一行拒绝；制度编号、生效日期可以为空（原文没有就不填，导入后在页面上补；空值不会覆盖页面上补的）；
     - 导入的版本都是草稿；核对后由管理员在系统里设为现行。
-认证：环境变量 BRIGHTRULE_API_KEY（请求头 x-api-key），或 BRIGHTRULE_TOKEN（登录会话令牌，Authorization: Bearer）。
+认证（三选一）：
+    --login                    运行时输入账号、密码登录（推荐；密码不回显、不保存）。上传文件只认登录会话；
+    BRIGHTRULE_TOKEN           登录会话令牌（Authorization: Bearer）；
+    BRIGHTRULE_API_KEY         API Key（x-api-key）：只能查询和写记录，平台的文件上传不认 API Key，有文件要传时请用 --login。
 """
 from __future__ import annotations
 
 import argparse
 import csv
 import datetime as _dt
+import getpass
 import json
 import os
 import re
@@ -43,18 +47,52 @@ class ApiError(Exception):
     pass
 
 
+class AuthError(ApiError):
+    """401：凭证不被接受。继续跑下去每一行都会同样失败，所以整批停下。"""
+
+
 class Api:
-    def __init__(self, base: str, timeout: int = 60):
+    def __init__(self, base: str, timeout: int = 60, login: bool = False):
         self.base = base.rstrip('/')
         self.timeout = timeout
         self.headers = {'user-agent': 'brightrule-import/1.0'}
+        self.mode = ''
         key, token = os.environ.get('BRIGHTRULE_API_KEY'), os.environ.get('BRIGHTRULE_TOKEN')
-        if key:
-            self.headers['x-api-key'] = key
+        if login:
+            self.sign_in()
         elif token:
             self.headers['authorization'] = f'Bearer {token}'
+            self.mode = 'session'
+        elif key:
+            self.headers['x-api-key'] = key
+            self.mode = 'api_key'
         else:
-            raise SystemExit('请先设置环境变量 BRIGHTRULE_API_KEY（系统里生成的 API Key），不要把 Key 写在命令或文件里。')
+            raise SystemExit('请加 --login（运行时输入账号密码），或设置环境变量 BRIGHTRULE_TOKEN / BRIGHTRULE_API_KEY。'
+                             '不要把密码或 Key 写在命令或文件里。')
+
+    def sign_in(self) -> None:
+        email = os.environ.get('BRIGHTRULE_EMAIL') or input('登录邮箱：').strip()
+        password = getpass.getpass('密码（不回显）：')
+        req = urllib.request.Request(self.base + '/api/v1/auth/sign-in/email', method='POST',
+                                     data=json.dumps({'email': email, 'password': password}).encode(),
+                                     headers={**self.headers, 'content-type': 'application/json'})
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as r:
+                body = json.loads(r.read().decode('utf-8', 'replace') or '{}')
+                token = r.headers.get('set-auth-token') or body.get('token') or (body.get('data') or {}).get('token')
+                cookies = [c.split(';', 1)[0] for c in r.headers.get_all('set-cookie') or []]
+        except urllib.error.HTTPError as e:
+            raise SystemExit(f'登录失败（{e.code}）：请检查邮箱和密码。') from None
+        except urllib.error.URLError as e:
+            raise SystemExit(f'连不上 {self.base}：{e.reason}') from None
+        if token:
+            self.headers['authorization'] = f'Bearer {token}'
+        if cookies:
+            self.headers['cookie'] = '; '.join(cookies)
+        if not token and not cookies:
+            raise SystemExit('登录接口没有返回会话，无法继续。')
+        self.mode = 'session'
+        print(f'已登录：{email}')
 
     def call(self, method: str, path: str, body=None, raw: Optional[bytes] = None, content_type: Optional[str] = None):
         url = path if path.startswith('http') else self.base + path
@@ -70,6 +108,8 @@ class Api:
                 text = r.read().decode('utf-8', 'replace')
         except urllib.error.HTTPError as e:
             detail = e.read().decode('utf-8', 'replace')[:300]
+            if e.code == 401:
+                raise AuthError(f'{method} {path} → 401 {detail}') from None
             raise ApiError(f'{method} {path} → {e.code} {detail}') from None
         except urllib.error.URLError as e:
             raise ApiError(f'连不上 {self.base}：{e.reason}') from None
@@ -295,6 +335,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument('--package', required=True, type=Path, help='package.py 生成的导入包目录：导入包/<时间>')
     ap.add_argument('--url', required=True, help='系统地址，如 https://xxx.objectos.ai')
     ap.add_argument('--apply', action='store_true', help='真正写入；不加只预演')
+    ap.add_argument('--login', action='store_true', help='运行时输入账号密码登录（上传文件需要登录会话）')
     args = ap.parse_args(argv)
     package = args.package.resolve()
     if '内部留存' in str(package):
@@ -304,7 +345,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             raise SystemExit(f'这是脱敏结果，不是导入包：先运行 ./run.sh package --run <脱敏结果/时间>，'
                              f'再把它生成的「导入包/<时间>」目录交给 --package。（{args.package}）')
         raise SystemExit(f'不是导入包（没有 批次清单.csv）：{args.package}')
-    api = Api(args.url)
+    api = Api(args.url, login=args.login)
     options = api.category_options()
     rows = [r for r in read_sheet(package) if r.get('导入', '是') == '是']
     print(('写入' if args.apply else '预演（不写入）') + f'：{len(rows)} 份制度 → {args.url}')
@@ -312,12 +353,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     for row in rows:
         try:
             rp = plan_row(api, package, row, options)
+        except AuthError as e:
+            raise SystemExit(f'凭证被拒绝，整批停止：{e}\n请用 --login（输入账号密码）或检查 BRIGHTRULE_TOKEN / BRIGHTRULE_API_KEY。')
         except ApiError as e:
             rp = RowPlan(row.get('包内目录', ''), row.get('制度编号', ''), row.get('制度名称', ''), row.get('版本号', ''),
                          rejected=f'查询系统失败：{e}')
         if args.apply and not rp.rejected and rp.steps:
             try:
                 apply_row(api, rp)
+            except AuthError as e:
+                print(f'  ✗ {rp.folder}\n      写入中断：{e}')
+                hint = ('API Key 不能上传文件：请改用 --login（输入账号密码）重跑。' if api.mode == 'api_key'
+                        else '登录已失效或没有权限：请重新 --login 后重跑。')
+                raise SystemExit(f'凭证被拒绝，整批停止。{hint}已写入的部分保留，重跑会接着做，不会重复。')
             except ApiError as e:
                 rp.rejected = f'写入中断：{e}（已写入的部分保留；修正后重跑会接着做）'
         plans.append(rp)
@@ -329,8 +377,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     todo = [p for p in plans if p.steps and not p.rejected]
     rej = [p for p in plans if p.rejected]
     print(f'{"已写入" if args.apply else "将写入"} {len(todo)} 份，无变化 {len(plans) - len(todo) - len(rej)} 份，拒绝 {len(rej)} 份。')
+    uploads = any(st[0] in ('create_doc', 'update_doc') for p in todo for st in p.steps)
     if not args.apply and todo:
-        print('确认无误后，在命令末尾加 --apply 写入。')
+        if uploads and api.mode == 'api_key':
+            print('注意：要上传文件，而平台的文件上传不认 API Key。写入时请用 --login（输入账号密码）。')
+        print('确认无误后，在命令末尾加 --apply 写入' + ('（并加 --login）' if uploads and api.mode == 'api_key' else '') + '。')
     if args.apply and todo:
         print('导入的版本是草稿：请在系统里核对后，把版本状态改为「现行」，员工才能看到、问到。')
     return 1 if rej else 0

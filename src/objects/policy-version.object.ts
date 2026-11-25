@@ -40,8 +40,8 @@ export const PolicyVersion = ObjectSchema.create({
   fieldGroups: [
     { key: 'details', label: '版本信息' },
     { key: 'content', label: '正文' },
-    // 导入工具维护的字段和原件：收在最后，默认折叠
-    { key: 'import', label: '原件与导入信息', collapse: 'collapsed' },
+    // 原件单独一组、默认折叠；导入工具维护的字段（条号索引、字数、token、哈希）hidden，不进表单
+    { key: 'import', label: '原件', collapse: 'collapsed' },
   ],
 
   fields: {
@@ -66,16 +66,16 @@ export const PolicyVersion = ObjectSchema.create({
       group: 'content',
       description: '脱敏后的正文全文（Markdown）：条文以 **第X条** 开头，章节用 ## 标题。AI 按它作答，规范性附件的全文在附件里',
     }),
-    article_index: Field.json({
+    article_index: Field.json({ hidden: true,
       label: '条号索引',
       group: 'import',
       description: '每一条：{ article, chapter, redacted: [起, 止] }，偏移按正文的码点计；作答时直接读 body_md 即可',
     }),
     original_file: Field.file({ label: '正文原件（docx / PDF）', group: 'import' }),
 
-    text_chars: Field.number({ label: '字数', scale: 0, min: 0, group: 'import', description: '正文的字数（码点数）；0 表示还没有正文' }),
-    text_tokens: Field.number({ label: 'Token 估算', scale: 0, min: 0, group: 'import' }),
-    content_hash: Field.text({
+    text_chars: Field.number({ hidden: true, label: '字数', scale: 0, min: 0, group: 'import', description: '正文的字数（码点数）；0 表示还没有正文' }),
+    text_tokens: Field.number({ hidden: true, label: 'Token 估算', scale: 0, min: 0, group: 'import' }),
+    content_hash: Field.text({ hidden: true,
       label: '内容哈希',
       maxLength: 64,
       group: 'import',

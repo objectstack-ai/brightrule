@@ -15,8 +15,6 @@ const policyAttachmentViews: UI.View = {
       { field: 'attachment_class' },
       { field: 'sort_no' },
       { field: 'is_current' },
-      { field: 'has_text' },
-      { field: 'text_chars' },
     ],
     sort: [{ field: 'sort_no', order: 'asc' }],
   },

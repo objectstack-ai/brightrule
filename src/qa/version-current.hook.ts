@@ -7,11 +7,15 @@ type Row = Record<string, unknown>;
  * inquiry. Marking a version `current` is the one act a maintainer performs;
  * this hook carries its consequences:
  *
- *   1. every clause of the version becomes current (`is_current`), and every
- *      clause of a version that is not current stops being so;
+ *   1. every clause and every document (版本文档) of the version becomes
+ *      current (`is_current`), and every clause and document of a version that
+ *      is not current stops being so;
  *   2. the policy's other current version is superseded (which runs this hook
- *      for it in turn, retiring its clauses);
- *   3. the policy records the new version as its `current_version`.
+ *      for it in turn, retiring its clauses and documents);
+ *   3. the policy records the new version as its `current_version`, and a
+ *      policy still in draft becomes published — marking its first version
+ *      current is the publishing act. A policy being revised or abolished keeps
+ *      its status: only the maintainer moves it out of those.
  *
  * Writes go row by row through `ctx.api`, never as one predicate update: each
  * row write raises the record event the knowledge index follows, where a bulk
@@ -41,6 +45,16 @@ export const VersionCurrentHook = defineHook({
       }
     }
 
+    const documents = (await api.object('brightrule_policy_document').find({
+      where: { policy_version: id },
+      fields: ['id', 'is_current'],
+    })) as Row[];
+    for (const document of documents) {
+      if (Boolean(document.is_current) !== isCurrent) {
+        await api.object('brightrule_policy_document').update({ id: document.id, is_current: isCurrent });
+      }
+    }
+
     if (!isCurrent || !version.policy) return;
     const siblings = (await api.object('brightrule_policy_version').find({
       where: { policy: version.policy, version_status: 'current' },
@@ -51,10 +65,15 @@ export const VersionCurrentHook = defineHook({
         await api.object('brightrule_policy_version').update({ id: sibling.id, version_status: 'superseded' });
       }
     }
+    const policy = (await api.object('brightrule_policy').findOne({
+      where: { id: version.policy },
+      fields: ['id', 'status'],
+    })) as Row | null;
     await api.object('brightrule_policy').update({
       id: version.policy,
       current_version: version.version_no ?? null,
       ...(version.effective_date ? { effective_date: version.effective_date } : {}),
+      ...(policy?.status === 'draft' ? { status: 'published' } : {}),
     });
   },
 });
@@ -128,6 +147,75 @@ export const ClauseCurrentHook = defineHook({
     if (askedPolicy === undefined) data.policy = versionPolicy;
     else if (askedPolicy !== versionPolicy) {
       throw Object.assign(new Error('CLAUSE_POLICY_MISMATCH'), { code: 'CLAUSE_POLICY_MISMATCH' });
+    }
+
+    if (!previous || versionChanged) data.is_current = version.version_status === 'current';
+  },
+});
+
+export const DOCUMENT_POLICY_MISMATCH = 'DOCUMENT_POLICY_MISMATCH';
+export const DOCUMENT_VERSION_NOT_FOUND = 'DOCUMENT_VERSION_NOT_FOUND';
+
+/**
+ * Keep a version document's two parents in step, and its currency with its
+ * version — the same rule as {@link ClauseCurrentHook}, for 版本文档.
+ *
+ * - The version decides: a save that names a version and no policy gets the
+ *   version's policy; one that names a different policy is refused.
+ * - Moving a document to another version moves it to that version's policy.
+ * - A document added to, or moved to, a version is current exactly when that
+ *   version is, so an import into the current version needs no second write.
+ *
+ * Like the clause hook, the handler names nothing outside itself, so
+ * `os build` lowers it to a metadata-only body.
+ */
+export const PolicyDocumentHook = defineHook({
+  name: 'brightrule_policy_document_current',
+  object: 'brightrule_policy_document',
+  events: ['beforeInsert', 'beforeUpdate'],
+  refusals: {
+    [DOCUMENT_POLICY_MISMATCH]: {
+      message: '版本文档的「所属制度」必须是「所属版本」所属的制度。只选版本即可，所属制度会自动带出。',
+      status: 400,
+    },
+    [DOCUMENT_VERSION_NOT_FOUND]: {
+      message: '找不到所选的制度版本，或你无权读取它。',
+      status: 400,
+    },
+  },
+  handler: async (ctx: HookContext) => {
+    // The write payload: `ctx.input` itself in a lowered body, `ctx.input.data`
+    // for a bundled handler. A document has no field named `data`.
+    const input = ctx.input as Record<string, unknown> | undefined;
+    const nested = input?.data;
+    const data = (nested && typeof nested === 'object' && !Array.isArray(nested) ? nested : input) as
+      | Record<string, unknown>
+      | undefined;
+    if (!data || !ctx.api) return;
+    const previous = ctx.previous as Record<string, unknown> | undefined;
+    // A reference field's id, whether the payload holds the id or the record.
+    const refId = (value: unknown): string | undefined => {
+      const v = value && typeof value === 'object' ? (value as { id?: unknown }).id : value;
+      return typeof v === 'string' && v !== '' ? v : undefined;
+    };
+    const versionChanged = 'policy_version' in data;
+    const policyChanged = 'policy' in data;
+    // An update that touches neither parent (body, is_current, …) has nothing to check.
+    if (previous && !versionChanged && !policyChanged) return;
+
+    const versionId = refId(versionChanged ? data.policy_version : previous?.policy_version);
+    if (!versionId) return; // the field's own required check answers a missing version
+    const version = (await ctx.api.object('brightrule_policy_version').findOne({
+      where: { id: versionId },
+    })) as Record<string, unknown> | null;
+    if (!version) throw Object.assign(new Error('DOCUMENT_VERSION_NOT_FOUND'), { code: 'DOCUMENT_VERSION_NOT_FOUND' });
+    const versionPolicy = refId(version.policy);
+
+    // The policy this save asks for: the payload's, else (version unchanged) the stored one.
+    const askedPolicy = refId(policyChanged ? data.policy : versionChanged ? undefined : previous?.policy);
+    if (askedPolicy === undefined) data.policy = versionPolicy;
+    else if (askedPolicy !== versionPolicy) {
+      throw Object.assign(new Error('DOCUMENT_POLICY_MISMATCH'), { code: 'DOCUMENT_POLICY_MISMATCH' });
     }
 
     if (!previous || versionChanged) data.is_current = version.version_status === 'current';

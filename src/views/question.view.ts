@@ -1,6 +1,8 @@
 import * as UI from '@objectstack/spec/ui';
 import { Question } from '../objects/question.object.js';
 
+// List columns stay short: the redacted answer, the basis and the run record
+// (Markdown / JSON) are read on the record page, never in a grid cell.
 const questionViews: UI.View = {
   object: Question.name,
   list: {
@@ -8,11 +10,15 @@ const questionViews: UI.View = {
     type: 'grid',
     columns: [
       { field: 'question' },
+      { field: 'scope_kind' },
+      { field: 'scope_policy' },
+      { field: 'scope_version' },
       { field: 'status' },
       { field: 'answer' },
       { field: 'cited_clause' },
       { field: 'match_score' },
       { field: 'answer_source' },
+      { field: 'answer_route' },
     ],
     sort: [{ field: 'created_at', order: 'desc' }],
   },
@@ -22,6 +28,8 @@ const questionViews: UI.View = {
       type: 'grid',
       columns: [
         { field: 'question' },
+        { field: 'scope_policy' },
+        { field: 'scope_version' },
         { field: 'answer' },
         { field: 'match_score' },
         { field: 'created_at' },

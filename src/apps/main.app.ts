@@ -2,6 +2,8 @@ import * as UI from '@objectstack/spec/ui';
 import { Note } from '../objects/note.object.js';
 import { Policy } from '../objects/policy.object.js';
 import { PolicyVersion } from '../objects/policy-version.object.js';
+import { PolicyDocument } from '../objects/policy-document.object.js';
+import { PolicyRelation } from '../objects/policy-relation.object.js';
 import { Clause } from '../objects/clause.object.js';
 import { Question } from '../objects/question.object.js';
 
@@ -43,6 +45,9 @@ const mainApp: UI.App = {
         { id: 'brightrule_policy_library_nav', type: 'object', objectName: Policy.name, viewName: 'published', label: '制度库', icon: 'library' },
         { id: 'brightrule_policy_nav', type: 'object', objectName: Policy.name, label: '全部制度', icon: 'book-open' },
         { id: 'brightrule_policy_version_nav', type: 'object', objectName: PolicyVersion.name, label: '制度版本', icon: 'git-branch' },
+        { id: 'brightrule_policy_document_nav', type: 'object', objectName: PolicyDocument.name, label: '版本文档', icon: 'file-text' },
+        { id: 'brightrule_policy_relation_nav', type: 'object', objectName: PolicyRelation.name, label: '制度关系', icon: 'link' },
+        { id: 'brightrule_policy_relation_pending_nav', type: 'object', objectName: PolicyRelation.name, viewName: 'pending', label: '待确认关系', icon: 'clock' },
         { id: 'brightrule_clause_nav', type: 'object', objectName: Clause.name, label: '条款', icon: 'list-ordered' },
         { id: 'brightrule_clause_current_nav', type: 'object', objectName: Clause.name, viewName: 'current', label: '现行条款', icon: 'circle-check' },
       ],

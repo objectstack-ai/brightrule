@@ -193,7 +193,7 @@ const relations = defineSeed(PolicyRelation, {
     {
       // Two library policies.
       from_version: T3,
-      relation_type: 'supplements',
+      relation_type: 'cites',
       to_policy: L,
       to_title: `《${L}》`,
       from_articles: '第八条',

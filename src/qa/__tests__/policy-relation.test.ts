@@ -150,6 +150,14 @@ describe('a policy relation keeps to its version', () => {
     );
   });
 
+  it('re-fills to_title when an update moves to_policy to another policy and names no title', async () => {
+    const stored = { id: 'r9', from_version: 'vC2', from_policy: 'pC', relation_type: 'basis', to_policy: 'pB', to_title: '《考勤与休假管理制度》' };
+    expect((await save({ to_policy: 'pA' }, stored)).to_title).toBe('《差旅费报销管理办法》');
+    // A title given in the same update wins; re-sending the same target changes nothing.
+    expect((await save({ to_policy: 'pA', to_title: '差旅办法' }, stored)).to_title).toBe('差旅办法');
+    expect((await save({ to_policy: 'pB' }, stored)).to_title).toBeUndefined();
+  });
+
   it('reads the payload as a lowered body receives it (ctx.input is the payload)', async () => {
     const d = await save({ from_version: 'vC2', relation_type: 'cites', to_policy: 'pB' }, undefined, true);
     expect(d.from_policy).toBe('pC');

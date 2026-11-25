@@ -19,6 +19,8 @@ export const RELATION_DUPLICATE = 'RELATION_DUPLICATE';
  *   「《费用报销管理规定》」 and 「费用报销管理规定 」 are the same target.
  * - A relation that names `to_policy` and no `to_title` gets the target's
  *   title, written as 《title》 — the way an extracted name reads in the text.
+ *   So does an update that moves `to_policy` to another policy without naming
+ *   a new title, so the stored name never belongs to the previous target.
  *
  * An update that touches none of the version, the two policies, the title or
  * the type (confirming it, editing the articles) is not checked again. The
@@ -98,7 +100,11 @@ export const PolicyRelationHook = defineHook({
     }
 
     let toTitle = after('to_title');
-    if (toPolicy !== undefined && normalize(toTitle) === '') {
+    // An update that points the relation at another library policy and names
+    // no new title would keep the old target's name: re-fill it as well.
+    const retargeted =
+      previous !== undefined && 'to_policy' in data && !('to_title' in data) && toPolicy !== refId(previous.to_policy);
+    if (toPolicy !== undefined && (normalize(toTitle) === '' || retargeted)) {
       const target = (await ctx.api.object('brightrule_policy').findOne({
         where: { id: toPolicy },
       })) as Record<string, unknown> | null;

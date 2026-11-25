@@ -437,7 +437,7 @@ def write_report(path: Path, packed: List[Packed], args) -> None:
              f'- 上传的文件：{"原件" if args.files == "original" else "脱敏后的 docx（不含原文）"}',
              f'- 元数据取自：{"原文" if args.meta == "original" else "脱敏后的文字"}',
              f'- 打包 {len(ok)} 份，拒绝 {len(packed) - len(ok)} 份', '',
-             '批次清单里「问题」一栏不为空的，请对照原件确认；制度编号、名称、版本号、生效日期必须填齐才能导入。', '']
+             '批次清单里「问题」一栏不为空的，请对照原件确认；制度名称、版本号必须有才能导入；制度编号、生效日期原文没有的可以留空。', '']
     rej = [p for p in packed if p.rejected]
     if rej:
         lines += ['## 拒绝打包', ''] + [f'- {p.folder or p.source}：{p.rejected}' for p in rej] + ['']

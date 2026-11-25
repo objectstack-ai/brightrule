@@ -40,17 +40,19 @@ export const PolicyVersion = ObjectSchema.create({
   fieldGroups: [
     { key: 'details', label: '版本信息' },
     { key: 'content', label: '正文' },
-    { key: 'import', label: '导入信息' },
+    // 导入工具维护的字段和原件：收在最后，默认折叠
+    { key: 'import', label: '原件与导入信息', collapse: 'collapsed' },
   ],
 
   fields: {
-    title: Field.text({ label: '版本标题', required: true, maxLength: 200, group: 'details' }),
     policy: Field.masterDetail('brightrule_policy', { label: '所属制度', required: true, group: 'details', deleteBehavior: 'restrict' }),
     version_no: Field.text({ label: '版本号', maxLength: 20, group: 'details' }),
+    title: Field.text({ label: '版本标题', required: true, maxLength: 200, group: 'details' }),
+    effective_date: Field.date({ label: '生效日期', group: 'details' }),
+
     version_status: Field.select({
       label: '版本状态',
       group: 'details',
-      description: 'current = 现行，作答只用现行版本；draft = 草稿（导入后待核对）；superseded = 已被新版本替代',
       options: [
         { label: '草稿', value: 'draft', color: '#6B7280', default: true },
         { label: '现行', value: 'current', color: '#10B981' },
@@ -58,20 +60,18 @@ export const PolicyVersion = ObjectSchema.create({
       ],
     }),
     change_note: Field.textarea({ label: '修订说明', group: 'details' }),
-    effective_date: Field.date({ label: '生效日期', group: 'details' }),
 
     body_md: Field.markdown({
       label: '正文',
       group: 'content',
-      description:
-        '本版本的正文全文（Markdown，已脱敏），条文以 **第X条** 开头、章节为 ## 标题；AI 作答的正文来源。规范性附件的全文在附件子表',
+      description: '脱敏后的正文全文（Markdown）：条文以 **第X条** 开头，章节用 ## 标题。AI 按它作答，规范性附件的全文在附件里',
     }),
     article_index: Field.json({
       label: '条号索引',
-      group: 'content',
+      group: 'import',
       description: '每一条：{ article, chapter, redacted: [起, 止] }，偏移按正文的码点计；作答时直接读 body_md 即可',
     }),
-    original_file: Field.file({ label: '正文原件（docx / PDF）', group: 'content' }),
+    original_file: Field.file({ label: '正文原件（docx / PDF）', group: 'import' }),
 
     text_chars: Field.number({ label: '字数', scale: 0, min: 0, group: 'import', description: '正文的字数（码点数）；0 表示还没有正文' }),
     text_tokens: Field.number({ label: 'Token 估算', scale: 0, min: 0, group: 'import' }),

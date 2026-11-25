@@ -38,9 +38,10 @@ export const PolicyAttachment = ObjectSchema.create({
   searchableFields: ['title'],
 
   fieldGroups: [
-    { key: 'basic', label: '附件' },
-    { key: 'content', label: '内容' },
-    { key: 'import', label: '导入信息' },
+    { key: 'basic', label: '附件信息' },
+    { key: 'content', label: '附件正文' },
+    // 自动带出 / 导入工具维护的字段和原件：收在最后，默认折叠
+    { key: 'import', label: '原件与导入信息', collapse: 'collapsed' },
   ],
 
   fields: {
@@ -49,7 +50,7 @@ export const PolicyAttachment = ObjectSchema.create({
       required: true,
       maxLength: 200,
       group: 'basic',
-      description: '附件自己的名称，原文怎么写就怎么写（如「本集团内训师申报表」），不带制度名',
+      description: '原文里附件自己的名称，不带制度名',
     }),
     policy_version: Field.masterDetail('brightrule_policy_version', {
       label: '所属版本',
@@ -59,14 +60,14 @@ export const PolicyAttachment = ObjectSchema.create({
     }),
     policy: Field.lookup('brightrule_policy', {
       label: '所属制度',
-      group: 'basic',
+      group: 'import',
       description: '由所属版本自动带出',
     }),
     attachment_class: Field.select({
       label: '附件类别',
       required: true,
       group: 'basic',
-      description: 'normative 规范性附件与正文同等效力，一起读；form 表单、original 仅原件不作答复依据',
+      description: '规范性附件与正文同等效力，作答时一起读；表单、仅原件不作答复依据',
       options: [
         { label: '规范性（并入全文）', value: 'normative' },
         { label: '表单（交给用户）', value: 'form' },
@@ -77,17 +78,17 @@ export const PolicyAttachment = ObjectSchema.create({
       label: '编号',
       maxLength: 20,
       group: 'basic',
-      description: '原文里的编号，如「附件1」「附表2」；正文里按这个编号引用附件，引用出处时也写它',
+      description: '原文里的编号，如「附件1」「附表2」',
     }),
-    sort_no: Field.number({ label: '序号', scale: 0, min: 1, group: 'basic', description: '附件的先后顺序：1、2、3…' }),
+    sort_no: Field.number({ label: '序号', scale: 0, min: 1, group: 'basic', }),
     is_current: Field.boolean({
       label: '现行',
       defaultValue: false,
-      group: 'basic',
+      group: 'import',
       description: 'true = 属于现行版本；随所属版本的状态自动维护',
     }),
 
-    original_file: Field.file({ label: '原件（docx / PDF）', group: 'content' }),
+    original_file: Field.file({ label: '原件（docx / PDF）', group: 'import' }),
     body_md: Field.markdown({
       label: '附件正文',
       group: 'content',

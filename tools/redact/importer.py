@@ -9,10 +9,12 @@
 按批次清单里「导入 = 是」的行，依次：
     制度（按制度编号找；清单里没有编号的按名称找；都找不到就新建为草稿）→ 版本（按制度 + 版本号找，没有就新建为草稿）
     → 版本文档（按 类型 + 序号 找：没有就上传文件并新建；内容哈希或正文变了就更新；一样就跳过）
-    上传的文件是导入包里的 正文.docx / 附件N.docx：默认是脱敏后的 docx，打包时用 --files original 才是原件。
+    上传的文件是导入包里有的 附件N.docx（及 正文.docx）：默认正文不传文件、附件传脱敏后的 docx，见 package --files。
+    导入包里没有文件的文档，系统里原有的文件会被去掉。
 规则：
     - 同一批导两次，结果不变（全部跳过）；
-    - 版本已是「现行」而内容有变化（文档增减、原件或正文不同）：整行拒绝，请用新版本号导入；
+    - 版本已是「现行」而内容有变化（文档增减、正文、标题或分类不同）：整行拒绝，请用新版本号导入；
+      只是上传的文件变了（如正文不再上传 docx）可以更新；
     - 只读导入包；路径里有「内部留存」的一律拒绝；
     - 制度名称、版本号缺任何一项，这一行拒绝；制度编号、生效日期可以为空（原文没有就不填，导入后在页面上补；空值不会覆盖页面上补的）；
     - 导入的版本都是草稿；核对后由管理员在系统里设为现行。
@@ -290,6 +292,7 @@ def plan_row(api: Api, package: Path, row: Dict[str, str], options: List[Tuple[s
     is_current = bool(version and version.get('version_status') == 'current')
 
     doc_changes = []
+    content_changed = False      # 文字、标题、分类、文档增减；只换文件（如不再上传正文 docx）不算
     seen = set()
     for doc in manifest['documents']:
         key = (doc['doc_kind'], int(doc['sort_no']))
@@ -302,23 +305,30 @@ def plan_row(api: Api, package: Path, row: Dict[str, str], options: List[Tuple[s
         if doc['doc_kind'] == 'attachment':
             fields['attachment_class'] = doc.get('attachment_class')
         label = '正文' if doc['doc_kind'] == 'body' else f"附件{doc['sort_no']}"
+        name = doc.get('file') or doc.get('original')   # 不传文件的正文（package 默认）没有
+        file_path = folder / name if name else None
         cur = existing.get(key)
         if cur is None:
             doc_changes.append(label + '：新建')
-            rp.steps.append(('create_doc', fields, folder / (doc.get('file') or doc['original'])))
+            content_changed = True
+            rp.steps.append(('create_doc', fields, file_path))
             continue
-        same_file = cur.get('content_hash') == doc['content_hash']
+        same_file = cur.get('content_hash') == doc['content_hash'] and (file_path is not None or not cur.get('original_file'))
         same_text = (cur.get('body_md_redacted') or None) == md
         same_meta = cur.get('title') == doc['title'] and cur.get('attachment_class') == fields.get('attachment_class')
         if same_file and same_text and same_meta:
             continue
-        what = [w for w, ok in (('原件', same_file), ('脱敏正文', same_text), ('标题或分类', same_meta)) if not ok]
+        what = [w for w, ok in (('文件' if file_path else '去掉文件', same_file), ('脱敏正文', same_text),
+                                ('标题或分类', same_meta)) if not ok]
         doc_changes.append(f'{label}：更新' + '、'.join(what))
-        rp.steps.append(('update_doc', cur['id'], fields, None if same_file else folder / (doc.get('file') or doc['original'])))
+        content_changed = content_changed or not (same_text and same_meta)
+        if file_path is None and cur.get('original_file'):
+            fields['original_file'] = None
+        rp.steps.append(('update_doc', cur['id'], fields, None if same_file else file_path))
     extra = [k for k in existing if k not in seen]
     if extra:
         rp.notes.append('系统里还有导入包没有的文档：' + '、'.join('正文' if k[0] == 'body' else f'附件{k[1]}' for k in extra) + '（不删除）')
-    if is_current and (doc_changes or extra):
+    if is_current and (content_changed or extra):
         rp.rejected = f'版本 {rp.version_no} 已是现行，内容有变化（{"；".join(doc_changes) or "文档增减"}）。请用新的版本号导入。'
         rp.steps = []
         return rp

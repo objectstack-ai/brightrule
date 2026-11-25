@@ -55,11 +55,23 @@ def package_targets(api: Api, package: Path, apply: bool) -> List[Dict]:
     return list(found.values())
 
 
+def count_attachments(api: Api, version_id: str) -> int:
+    """版本下的附件数，只用于显示。附件子表（brightrule_policy_attachment）是后来的结构；还没部署它的环境里
+    同样的记录在旧的版本文档表（brightrule_policy_document）。两种都随版本级联删除，删除顺序不受影响。"""
+    for obj in ('brightrule_policy_attachment', 'brightrule_policy_document'):
+        try:
+            return len(api.find(obj, {'policy_version': version_id}, 'id'))
+        except ApiError as e:
+            if isinstance(e, AuthError) or 'not registered' not in str(e):
+                raise
+    return 0
+
+
 def plan(api: Api, policy: Dict) -> List[tuple]:
     """删除顺序：条款（挂在制度上，限制删除）→ 版本（附件、以它为来源的关系随之删除）→ 制度。"""
     clauses = api.find('brightrule_clause', {'policy': policy['id']}, 'id')
     versions = api.find('brightrule_policy_version', {'policy': policy['id']}, 'id,version_no,version_status')
-    atts = sum(len(api.find('brightrule_policy_attachment', {'policy_version': v['id']}, 'id')) for v in versions)
+    atts = sum(count_attachments(api, v['id']) for v in versions)
     print(f'  {policy.get("title")}（{policy.get("policy_no") or "无编号"}）：版本 {len(versions)} 个、附件 {atts} 个、条款 {len(clauses)} 条')
     return ([('brightrule_clause', c['id']) for c in clauses]
             + [('brightrule_policy_version', v['id']) for v in versions]
@@ -91,10 +103,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         progress = Progress(len(policies))
         for p in policies:
             print(progress.next(), end='')
-            steps = plan(api, p)
-            if not args.apply:
-                continue
             try:
+                steps = plan(api, p)
+                if not args.apply:
+                    continue
                 for obj, rid in steps:
                     api.delete(obj, rid)
                 print('      已删除')

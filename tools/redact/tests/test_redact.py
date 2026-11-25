@@ -336,6 +336,39 @@ class MarkdownTest(unittest.TestCase):
         self.assertEqual(md.count('框内文字'), 1)     # 兼容副本不重复
         self.assertIn('\\1. 不是列表', md)
 
+    def test_sections_and_table_of_contents_are_marked(self):
+        import docx2md
+
+        def p(text, style=None, anchor=None):
+            ppr = f'<w:pPr><w:pStyle w:val="{style}"/></w:pPr>' if style else ''
+            run = f'<w:r><w:t xml:space="preserve">{text}</w:t></w:r>'
+            if anchor:
+                run = f'<w:hyperlink w:anchor="{anchor}">{run}</w:hyperlink>'
+            return f'<w:p>{ppr}{run}</w:p>'
+        info = ('<w:tbl><w:tr><w:tc><w:p><w:r><w:t>制度名称</w:t></w:r></w:p></w:tc>'
+                '<w:tc><w:p><w:r><w:t>示例办法</w:t></w:r></w:p></w:tc></w:tr></w:tbl>')
+        body = (p('示〔2025〕1号') + p('关于印发《示例办法》的通知') + p('各部门：现印发给你们。') + info
+                + p('目录', ) + p('第一章 总则\t1', 'TOC1', '_Toc1') + p('第二章 附则 3', 'TOC1')
+                + p('示例办法') + p('第一章 总则') + p('第一条 为规范管理，制定本办法。') + p('第二章 附则')
+                + p('第二条 本办法自印发之日起施行。') + p('示例办公室  2025年1月9日印发'))
+        styles = (f'<w:styles {W}><w:style w:type="paragraph" w:styleId="TOC1"><w:name w:val="toc 1"/></w:style></w:styles>')
+        parts = {'word/document.xml': f'<w:document {W}><w:body>{body}</w:body></w:document>'.encode(),
+                 'word/styles.xml': styles.encode()}
+        md = docx2md.docx_to_markdown(parts)
+        heads = [l for l in md.split('\n') if l.startswith('#')]
+        self.assertEqual(heads, ['# 发文通知', '# 制度信息', '# 目录', '# 正文：示例办法',
+                                 '## 第一章 总则', '## 第二章 附则', '# 版记'])
+        self.assertIn('- 第一章 总则\n- 第二章 附则', md)          # 目录：列表、去页码、不当章标题
+        self.assertEqual(md.count('## 第一章 总则'), 1)
+
+    def test_manual_table_of_contents(self):
+        import docx2md
+        body = ''.join(f'<w:p><w:r><w:t xml:space="preserve">{t}</w:t></w:r></w:p>' for t in (
+            '目　录', '第一章　总则……………1', '第二章　附则……………2', '示例办法', '第一章　总则', '第一条　为规范管理。'))
+        md = docx2md.docx_to_markdown({'word/document.xml': f'<w:document {W}><w:body>{body}</w:body></w:document>'.encode()})
+        self.assertIn('# 目录\n\n- 第一章　总则\n- 第二章　附则', md)
+        self.assertEqual(md.count('## 第一章'), 1)
+
     def test_attachments_split_from_body(self):
         import docx2md
 

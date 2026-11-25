@@ -43,6 +43,17 @@ CLAUSE = re.compile(r'^(第[零〇一二三四五六七八九十百千0-9]+条)[
 MD_LEADING = re.compile(r'^([#>*+\-]|\d+[.)])(\s|$)')
 ATTACH_START = re.compile(r'^附\s*件\s*([0-9０-９]{1,2}|[一二三四五六七八九十]{1,2})?\s*[:：]?$')
 COLOPHON = re.compile(r'(印发|印制)$|^抄\s*送\s*[:：]')
+# 目录：Word 目录样式（toc 1 / 目录 1）、指向 _Toc 书签的链接、目录控件；手写目录是「目录」二字之后一串「标题 + 页码」
+TOC_STYLE = re.compile(r'^(?:toc|目录)\s*\d$')
+TOC_TITLE = re.compile(r'^目\s*录$')
+TOC_PAGE = re.compile(r'(?:[\s\.·…_．—\-]*)\s*(\d{1,4}|[ivxlcdmIVXLCDM]{1,6})$')
+TOC_MANUAL = re.compile(r'^(?:第[零〇一二三四五六七八九十百千0-9]+[章节条]|附\s*件|[一二三四五六七八九十]+、|\d+(?:\.\d+)*\s).{0,60}?'
+                        r'(?:[\.·…_．—\-]{2,}|\s)\s*\d{1,4}$')
+TOC_MARK = '\x01目录\x01'
+# 制度信息表：第一列里有这些字段名的表格
+INFO_TABLE = re.compile(r'\|\s*(?:制度名称|制度编[码号]|制度类别|制度层级|文件编号)\s*\|')
+SECTION_RX = re.compile(r'^(?:## 第[零〇一二三四五六七八九十百千0-9]+章|### 第[零〇一二三四五六七八九十百千0-9]+节|\*\*第[零〇一二三四五六七八九十百千0-9]+条)')
+NOTICE_RX = re.compile(r'通知|〔\d{4}〕|﹝\d{4}﹞|\[\d{4}\]|［\d{4}］|签发人|各.{0,12}[：:]$')
 BAD_NAME = re.compile(r'[\\/:*?"<>|\r\n\t]+')
 
 
@@ -215,6 +226,9 @@ class Styles:
                 return int(outline) + 1
         return 0
 
+    def is_toc(self, sid: Optional[str]) -> bool:
+        return any(TOC_STYLE.match(name) for name, _o, _n, _b in self._chain(sid))
+
     def numpr(self, sid: Optional[str]) -> Optional[etree._Element]:
         for _name, _o, numpr, _b in self._chain(sid):
             if numpr is not None:
@@ -230,6 +244,8 @@ class Converter:
         self.footnotes = self._notes(_parse(parts.get('word/footnotes.xml')), 'footnote')
         self.used_notes: List[str] = []
         self.doc = _parse(parts.get('word/document.xml'))
+        self.in_toc_control = False   # 在 Word 目录控件里
+        self.manual_toc = False       # 在「目录」二字之后的手写目录里
 
     def _notes(self, root: Optional[etree._Element], tag: str) -> Dict[str, str]:
         out = {}
@@ -289,11 +305,29 @@ class Converter:
                 label = self.numbering.label(num_id, int(_val(numpr, 'ilvl') or '0'))
         text = re.sub(r'[ \t\u3000]+\n', '\n', text).strip()
         blocks: List[str] = []
+        if text and self._toc_line(p, sid, text):
+            entry = TOC_PAGE.sub('', label + text).strip() if not TOC_TITLE.match(text) else ''
+            blocks.append(TOC_MARK + entry)   # 目录行：不当标题，去页码，渲染时归到「# 目录」下
+            return blocks
         if text:
             blocks.append(self._block(label, text, ppr, sid))
         for box in boxes:
             blocks.extend(self.blocks(box))
         return blocks
+
+    def _toc_line(self, p: etree._Element, sid: Optional[str], text: str) -> bool:
+        if self.in_toc_control or self.styles.is_toc(sid):
+            return True
+        if any((h.get(w('anchor')) or '').startswith('_Toc') for h in p.iter(w('hyperlink'))):
+            return True
+        if TOC_TITLE.match(re.sub(r'\s', ' ', text).strip()):
+            self.manual_toc = True
+            return True
+        if self.manual_toc:
+            if TOC_MANUAL.match(text):
+                return True
+            self.manual_toc = False
+        return False
 
     def _block(self, label: str, text: str, ppr: Optional[etree._Element], sid: Optional[str]) -> str:
         level = self.styles.heading_level(sid)
@@ -353,7 +387,14 @@ class Converter:
                 t = self.table(ch)
                 if t:
                     out.append(t)
-            elif tag in (w('sdt'), w('sdtContent'), w('customXml'), w('ins'), w('moveTo'), w('smartTag')):
+            elif tag == w('sdt'):
+                gallery = ch.find(f'{w("sdtPr")}/{w("docPartObj")}/{w("docPartGallery")}')
+                was = self.in_toc_control
+                if gallery is not None and 'contents' in (gallery.get(w('val')) or '').lower():
+                    self.in_toc_control = True
+                out.extend(self.blocks(ch))
+                self.in_toc_control = was
+            elif tag in (w('sdtContent'), w('customXml'), w('ins'), w('moveTo'), w('smartTag')):
                 out.extend(self.blocks(ch))
             elif tag == f'{{{MC}}}AlternateContent':
                 choice = ch.find(f'{{{MC}}}Choice')
@@ -365,18 +406,87 @@ class Converter:
         if self.doc is None:
             return ''
         body = self.doc.find(w('body'))
-        return self.render(list(body if body is not None else self.doc))
+        return self.render(list(body if body is not None else self.doc), sections=True)
 
-    def render(self, elements: List[etree._Element], notes: bool = True) -> str:
+    def render(self, elements: List[etree._Element], notes: bool = True, sections: bool = False) -> str:
         holder = etree.Element(w('body'))
         holder.extend(copy.deepcopy(e) for e in elements)
-        blocks = self.blocks(holder)
+        self.manual_toc = False
+        blocks = group_toc(self.blocks(holder))
+        if sections:
+            blocks = label_sections(blocks)
         if not notes:
             return '\n\n'.join(blocks) + '\n'
         lines = [f'[^{n}]: {self.footnotes.get(n, "")}' for n in self.used_notes]
         if lines:
             blocks += ['---'] + lines
         return '\n\n'.join(blocks) + '\n'
+
+
+def group_toc(blocks: List[str]) -> List[str]:
+    """把目录行收拢到「# 目录」下，每条一行列表。"""
+    out: List[str] = []
+    entries: List[str] = []
+
+    def flush() -> None:
+        if entries:
+            out.append('# 目录\n\n' + '\n'.join(f'- {e}' for e in entries))
+            entries.clear()
+    for b in blocks:
+        if b.startswith(TOC_MARK):
+            e = b[len(TOC_MARK):]
+            if e:
+                entries.append(e)
+            elif not entries and out and out[-1].startswith('# 目录'):
+                continue
+            else:
+                flush() if entries else None
+            continue
+        flush()
+        out.append(b)
+    flush()
+    return [b for b in out if b != '# 目录\n\n']
+
+
+def label_sections(blocks: List[str]) -> List[str]:
+    """标出各部分：发文通知、制度信息、目录（已标）、正文、版记。认不出正文（没有章、条）时原样返回。"""
+    first = next((i for i, b in enumerate(blocks) if SECTION_RX.match(b)), None)
+    if first is None:
+        return blocks
+    # 正文从制度标题开始：第一章 / 第一条前面那一行，短、不是表格、不是目录、不像通知
+    start = first
+    j = first - 1
+    if j >= 0:
+        b = blocks[j]
+        if (not b.startswith(('|', '#', '>')) and len(b) <= 40 and '\n' not in b and not NOTICE_RX.search(b)
+                and not b.startswith('附')):
+            start = j
+    # 版记：正文之后第一处「……印发」「抄送：」
+    end = len(blocks)
+    for k in range(first, len(blocks)):
+        if COLOPHON.search(blocks[k].split('\n')[0].strip()) and not SECTION_RX.match(blocks[k]):
+            end = k
+            break
+    head = blocks[:start]
+    out: List[str] = []
+    info = [i for i, b in enumerate(head) if b.startswith('|') and INFO_TABLE.search(b)]
+    toc = [i for i, b in enumerate(head) if b.startswith('# 目录')]
+    marks = sorted(set(info + toc))
+    notice = head[:marks[0]] if marks else head
+    if notice:
+        out.append('# 发文通知' if any(NOTICE_RX.search(b) for b in notice) else '# 文件开头')
+        out.extend(notice)
+    for i in range(marks[0] if marks else len(head), len(head)):
+        if i in info:
+            out.append('# 制度信息')
+        out.append(head[i])
+    title = blocks[start] if start < first else ''
+    out.append(f'# 正文：{title}' if title else '# 正文')
+    out.extend(blocks[first:end] if title else blocks[start:end])
+    if end < len(blocks):
+        out.append('# 版记')
+        out.extend(blocks[end:])
+    return out
 
 
 def docx_to_markdown(parts: Dict[str, bytes]) -> str:
@@ -461,11 +571,22 @@ def document_markdown(parts: Dict[str, bytes], split: bool = True) -> Tuple[str,
     main, attachments, colophon = split_document(conv.doc)
     if not split or not attachments:
         return conv.convert(), []
-    main_md = conv.render(main + colophon)
-    att_md = [(a, conv.render(a.blocks, notes=False)) for a in attachments]
-    listing = '\n'.join(f'> - [{a.name}]({a.name}.md)' for a in attachments)
-    main_md = main_md.rstrip('\n') + '\n\n> 附件已拆分为单独文件：\n>\n' + listing + '\n'
+    main_md = conv.render(main + colophon, sections=True)
+    att_md = [(a, attachment_markdown(conv, a)) for a in attachments]
+    listing = '\n'.join(f'- [{a.name}]({a.name}.md)' for a in attachments)
+    main_md = main_md.rstrip('\n') + '\n\n# 附件（已拆分为单独文件）\n\n' + listing + '\n'
     return main_md, att_md
+
+
+def attachment_markdown(conv: 'Converter', a: Attachment) -> str:
+    """附件开头标「# 附件N：标题」，原来的「附件N」和标题两行不再重复。"""
+    body = conv.render(a.blocks, notes=False).split('\n\n')
+    if body and ATTACH_START.match(body[0].strip()):
+        body = body[1:]
+    if body and a.title and body[0].strip() == a.title:
+        body = body[1:]
+    head = f'# 附件{a.number}' + (f'：{a.title}' if a.title else '')
+    return '\n\n'.join([head] + body).rstrip('\n') + '\n'
 
 
 def attachment_docx(parts: Dict[str, bytes], att: Attachment) -> bytes:

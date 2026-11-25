@@ -19,7 +19,8 @@
     - 制度名称、版本号缺任何一项，这一行拒绝；制度编号、生效日期可以为空（原文没有就不填，导入后在页面上补；空值不会覆盖页面上补的）；
     - 导入的版本都是草稿；核对后由管理员在系统里设为现行。
 认证（三选一）：
-    --login                    运行时输入账号、密码登录（推荐；密码不回显、不保存）。上传文件只认登录会话；
+    --login                    运行时输入账号、密码登录（密码不回显、不保存）。上传文件只认登录会话；
+                               只能单点登录的环境没有密码，用 BRIGHTRULE_API_KEY（默认导入包不传文件，够用）；
     BRIGHTRULE_TOKEN           登录会话令牌（Authorization: Bearer）；
     BRIGHTRULE_API_KEY         API Key（x-api-key）：只能查询和写记录，平台的文件上传不认 API Key，有文件要传时请用 --login。
 """
@@ -157,6 +158,23 @@ class Api:
             return [(o['value'], o['label']) for o in meta['fields']['category'].get('options') or []]
         except (ApiError, KeyError):
             return []
+
+
+# ── 进度 ──────────────────────────────────────────────────────────────────
+class Progress:
+    """逐份显示进度：「[已处理/总数] 制度」。云环境每次请求都慢，没有进度不知道到哪了。"""
+
+    def __init__(self, total: int):
+        self.total, self.done = total, 0
+        try:
+            sys.stdout.reconfigure(line_buffering=True)   # 管道里也逐行输出，不攒着
+        except (AttributeError, ValueError):
+            pass
+
+    def next(self) -> str:
+        """处理完一份调用，返回「[3/126]」。"""
+        self.done += 1
+        return f'[{self.done}/{self.total}]'
 
 
 # ── 计划 ──────────────────────────────────────────────────────────────────
@@ -380,6 +398,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     rows = [r for r in read_sheet(package) if r.get('导入', '是') == '是']
     print(('写入' if args.apply else '预演（不写入）') + f'：{len(rows)} 份制度 → {args.url}')
     plans: List[RowPlan] = []
+    progress = Progress(len(rows))
     for row in rows:
         try:
             rp = plan_row(api, package, row, options)
@@ -400,7 +419,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 rp.rejected = f'写入中断：{e}（已写入的部分保留；修正后重跑会接着做）'
         plans.append(rp)
         mark = '✗' if rp.rejected else ('·' if not rp.steps else '✓')
-        print(f'  {mark} {rp.folder}  {rp.policy_no} {rp.version_no}')
+        print(f'{progress.next()} {mark} {rp.folder}  {rp.policy_no} {rp.version_no}')
         for a in ([f'拒绝：{rp.rejected}'] if rp.rejected else rp.actions) + rp.notes:
             print(f'      {a}')
     write_report(package, plans, args)

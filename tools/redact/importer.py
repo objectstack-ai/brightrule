@@ -7,14 +7,14 @@
     python3 importer.py --package 导入包/<时间> --url https://<系统地址> --apply    # 写入
 
 按批次清单里「导入 = 是」的行，依次：
-    制度（按制度编号找；没有编号的按名称找；都没有就新建为草稿）→ 版本（按制度 + 版本号找，没有就新建为草稿）
+    制度（按制度编号找；清单里没有编号的按名称找；都找不到就新建为草稿）→ 版本（按制度 + 版本号找，没有就新建为草稿）
     → 版本文档（按 类型 + 序号 找：没有就上传文件并新建；内容哈希或正文变了就更新；一样就跳过）
     上传的文件是导入包里的 正文.docx / 附件N.docx：默认是脱敏后的 docx，打包时用 --files original 才是原件。
 规则：
     - 同一批导两次，结果不变（全部跳过）；
     - 版本已是「现行」而内容有变化（文档增减、原件或正文不同）：整行拒绝，请用新版本号导入；
     - 只读导入包；路径里有「内部留存」的一律拒绝；
-    - 制度名称、版本号缺任何一项，这一行拒绝；制度编号、生效日期可以为空（原文没有就不填）；
+    - 制度名称、版本号缺任何一项，这一行拒绝；制度编号、生效日期可以为空（原文没有就不填，导入后在页面上补；空值不会覆盖页面上补的）；
     - 导入的版本都是草稿；核对后由管理员在系统里设为现行。
 认证：环境变量 BRIGHTRULE_API_KEY（请求头 x-api-key），或 BRIGHTRULE_TOKEN（登录会话令牌，Authorization: Bearer）。
 """
@@ -188,10 +188,10 @@ def plan_row(api: Api, package: Path, row: Dict[str, str], options: List[Tuple[s
         found = api.find('brightrule_policy', {'policy_no': rp.policy_no}, select)
         key = f'制度编号都是 {rp.policy_no}'
     else:
-        # 没有制度编号：按名称找系统里同样没有编号的制度
-        found = [p for p in api.find('brightrule_policy', {'title': rp.title}, select) if not p.get('policy_no')]
-        key = f'没有制度编号、名称都是「{rp.title}」'
-        rp.notes.append('没有制度编号，按制度名称对应；以后补了编号，系统里也请一并补上')
+        # 没有制度编号：按名称对应。编号、生效日期可以之后在页面上补，补过的不会被清空，再导入也还能对上
+        found = api.find('brightrule_policy', {'title': rp.title}, select)
+        key = f'名称都是「{rp.title}」'
+        rp.notes.append('没有制度编号，按制度名称对应；导入后可在页面上补')
     policy = found[0] if found else None
     if len(found) > 1:
         rp.rejected = f'系统里有 {len(found)} 份制度{key}，请先处理重复'

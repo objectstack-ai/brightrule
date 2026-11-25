@@ -753,6 +753,11 @@ class PackageTest(unittest.TestCase):
         self.assertNotIn('policy_no', made[0])
         self.assertNotIn('effective_date', made[0])
         self.assertEqual(importer.plan_row(api, pkg, row3, []).steps, [])
+        # 页面上补了编号和生效日期后再导入：仍对应同一份，补的不被清空
+        made[0].update(policy_no='HD-XZ-009', effective_date='2025-03-01')
+        rp = importer.plan_row(api, pkg, row3, [])
+        self.assertEqual(rp.steps, [])
+        self.assertEqual(made[0]['policy_no'], 'HD-XZ-009')
         # 缺名称仍然拒绝
         self.assertIn('制度名称', importer.plan_row(api, pkg, dict(row3, 制度名称=''), []).rejected)
 

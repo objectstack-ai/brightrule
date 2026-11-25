@@ -8,7 +8,8 @@
 
 按批次清单里「导入 = 是」的行，依次：
     制度（按制度编号找，没有就新建为草稿）→ 版本（按制度 + 版本号找，没有就新建为草稿）
-    → 版本文档（按 类型 + 序号 找：没有就上传原件并新建；内容哈希或正文变了就更新；一样就跳过）
+    → 版本文档（按 类型 + 序号 找：没有就上传文件并新建；内容哈希或正文变了就更新；一样就跳过）
+    上传的文件是导入包里的 正文.docx / 附件N.docx：默认是脱敏后的 docx，打包时用 --files original 才是原件。
 规则：
     - 同一批导两次，结果不变（全部跳过）；
     - 版本已是「现行」而内容有变化（文档增减、原件或正文不同）：整行拒绝，请用新版本号导入；
@@ -211,7 +212,7 @@ def plan_row(api: Api, package: Path, row: Dict[str, str], options: List[Tuple[s
         cur = existing.get(key)
         if cur is None:
             doc_changes.append(label + '：新建')
-            rp.steps.append(('create_doc', fields, folder / doc['original']))
+            rp.steps.append(('create_doc', fields, folder / (doc.get('file') or doc['original'])))
             continue
         same_file = cur.get('content_hash') == doc['content_hash']
         same_text = (cur.get('body_md_redacted') or None) == md
@@ -220,7 +221,7 @@ def plan_row(api: Api, package: Path, row: Dict[str, str], options: List[Tuple[s
             continue
         what = [w for w, ok in (('原件', same_file), ('脱敏正文', same_text), ('标题或分类', same_meta)) if not ok]
         doc_changes.append(f'{label}：更新' + '、'.join(what))
-        rp.steps.append(('update_doc', cur['id'], fields, None if same_file else folder / doc['original']))
+        rp.steps.append(('update_doc', cur['id'], fields, None if same_file else folder / (doc.get('file') or doc['original'])))
     extra = [k for k in existing if k not in seen]
     if extra:
         rp.notes.append('系统里还有导入包没有的文档：' + '、'.join('正文' if k[0] == 'body' else f'附件{k[1]}' for k in extra) + '（不删除）')

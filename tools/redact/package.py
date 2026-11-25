@@ -2,24 +2,26 @@
 """打包：把一次脱敏的结果整理成导入包，交给 import.py 写进系统（brightrule#11）。
 
 用法：
-    python3 package.py --run 脱敏结果/<时间> --originals 原件目录 [--output 导入包] [--meta original|redacted]
+    python3 package.py --run 脱敏结果/<时间> [--output 导入包]                      # 默认：文件用脱敏后的 docx
+    python3 package.py --run 脱敏结果/<时间> --originals 原件目录 --files original   # 上传原件
 
 读：
     <run>/脱敏文件/             脱敏后的正文 .md 与附件 .md
     <run>/内部留存-勿外发/文件清单.json   原件与脱敏文件的对应、复查是否通过（脱敏工具写的）
-    原件目录                    原件 .docx（.doc 用 convert 就地转出的同名 .docx）
+    原件目录（可选）            --files original 或 --meta original 时才读
 写 <output>/<时间>/：
     批次清单.csv     每份制度一行：制度编号、名称、版本号、生效日期……人工核对后导入以它为准
     检查报告.md      条号缺漏、重复、「之一」，附件分类，取不到的字段，被拒绝的文件
-    <每份制度>/       manifest.json、正文.md、正文.original.docx、附件N.md、附件N.original.docx
+    <每份制度>/       manifest.json、正文.md、正文.docx、附件N.md、附件N.docx
 
-导入包含原件，和「内部留存-勿外发」一样不能外发、不能进 Git。
+默认上传到系统「原件」字段的是脱敏后的 docx，导入包里没有原文；用 --files original 时导入包含原件，
+和「内部留存-勿外发」一样不能外发、不能进 Git。
 
 条号索引、字数、token 估算、内容哈希的口径与应用一致（src/data/document-text.ts、docs/policy-document.md）：
 - 字数 = 脱敏正文的 Unicode 码点数（含 Markdown 标记）；token = ⌈字数 ÷ 1.5⌉；
 - 条号索引每条 {article, chapter, redacted: [起, 止)}，偏移按码点计，起点在 **第X条** 标记处，
   终点在下一条或下一个标题之前，不含末尾空行；没有章时 chapter 为 null；
-- 内容哈希 = 原件文件字节的 SHA-256（十六进制小写）。
+- 内容哈希 = 上传的那个文件（默认脱敏后的 docx）字节的 SHA-256（十六进制小写）。
 """
 from __future__ import annotations
 
@@ -236,30 +238,32 @@ class Packed:
     rejected: Optional[str] = None
 
 
-def pack_one(entry: Dict[str, object], docs: Path, originals: Path, out_root: Path, meta_from: str) -> Packed:
+def pack_one(entry: Dict[str, object], docs: Path, originals: Optional[Path], out_root: Path,
+             meta_from: str, files: str) -> Packed:
+    """files = 'redacted'：上传到系统的文件用脱敏后的 docx（正文、附件都是）；'original'：用原件。"""
     source = str(entry['source'])
     output = str(entry.get('output') or '')
     packed = Packed(folder=str(Path(output).with_suffix('')) if output else '', source=source)
     if not entry.get('passed'):
         packed.rejected = '脱敏复查未通过：' + (str(entry.get('error')) if entry.get('error') else f"{entry.get('leaks')} 处残留")
         return packed
-    src = originals / source
     red_docx = docs / output
     red_md = red_docx.with_suffix('.md')
-    if not src.exists():
-        packed.rejected = f'原件目录里找不到 {source}'
-        return packed
     if not red_md.exists():
         packed.rejected = '没有脱敏后的 .md（脱敏时用了 --no-md？）'
         return packed
-    with zipfile.ZipFile(src) as z:
-        parts = {n: z.read(n) for n in z.namelist()}
-    orig_main, _orig_att_md = document_markdown(parts)
-    orig_atts = split_document(_parse(parts['word/document.xml']))[1]
+    parts = None
+    if originals is not None:
+        src = originals / source
+        if not src.exists():
+            packed.rejected = f'原件目录里找不到 {source}'
+            return packed
+        with zipfile.ZipFile(src) as z:
+            parts = {n: z.read(n) for n in z.namelist()}
     red_main = red_md.read_text(encoding='utf-8')
     body = ATTACH_LISTING.sub('\n', red_main).rstrip('\n') + '\n'
 
-    meta, missing = metadata(orig_main if meta_from == 'original' else red_main)
+    meta, missing = metadata(document_markdown(parts)[0] if meta_from == 'original' and parts else red_main)
     packed.meta, packed.missing = meta, missing
     index = article_index(body)
     packed.problems = article_problems(index)
@@ -268,40 +272,57 @@ def pack_one(entry: Dict[str, object], docs: Path, originals: Path, out_root: Pa
 
     folder = out_root / packed.folder
     folder.mkdir(parents=True, exist_ok=True)
-    src_bytes = src.read_bytes()
+    body_bytes = (originals / source).read_bytes() if files == 'original' else red_docx.read_bytes()
     (folder / '正文.md').write_text(body, encoding='utf-8')
-    (folder / '正文.original.docx').write_bytes(src_bytes)
+    (folder / '正文.docx').write_bytes(body_bytes)
     stats = text_stats(body)
     packed.body_tokens = int(stats['text_tokens'])
-    documents = [{'doc_kind': 'body', 'sort_no': 0, 'title': meta.get('title') or Path(source).stem,
-                  'md': '正文.md', 'original': '正文.original.docx', 'article_index': index,
-                  'content_hash': sha256(src_bytes), **stats}]
+    documents = [{'doc_kind': 'body', 'sort_no': 0, 'title': meta.get('title') or red_docx.stem,
+                  'md': '正文.md', 'file': '正文.docx', 'article_index': index,
+                  'content_hash': sha256(body_bytes), **stats}]
 
+    # 附件：脱敏件按「附件N-标题.md / .docx」配对；用原件时从原件里按同一规则拆出对应的附件
     att_dir = red_docx.parent / f'{red_docx.stem}-附件'
-    red_atts = {}
+    red_md_by_no: Dict[int, Path] = {}
+    red_docx_by_no: Dict[int, Path] = {}
     if att_dir.is_dir():
-        for f in sorted(att_dir.glob('附件*.md')):
+        for f in sorted(att_dir.iterdir()):
             m = ATT_FILE.match(f.name)
-            if m:
-                red_atts[int(m.group(1))] = f
-    orig_by_no = {a.number: a for a in orig_atts}
-    if set(red_atts) != set(orig_by_no):
-        packed.problems.append(f'附件对不上：脱敏件 {sorted(red_atts)}，原件 {sorted(orig_by_no)}')
-    for no in sorted(set(red_atts) & set(orig_by_no)):
-        md = red_atts[no].read_text(encoding='utf-8')
-        data = attachment_docx(parts, orig_by_no[no])
+            if m and f.suffix == '.md':
+                red_md_by_no[int(m.group(1))] = f
+            elif m and f.suffix == '.docx':
+                red_docx_by_no[int(m.group(1))] = f
+    orig_by_no = {a.number: a for a in split_document(_parse(parts['word/document.xml']))[1]} if parts else {}
+    if parts and set(red_md_by_no) != set(orig_by_no):
+        packed.problems.append(f'附件对不上：脱敏件 {sorted(red_md_by_no)}，原件 {sorted(orig_by_no)}')
+    for no in sorted(red_md_by_no):
+        if files == 'original':
+            if no not in orig_by_no:
+                continue
+            data = attachment_docx(parts, orig_by_no[no])
+        else:
+            if no not in red_docx_by_no:
+                packed.problems.append(f'附件{no} 没有脱敏后的 .docx')
+                continue
+            data = red_docx_by_no[no].read_bytes()
+        md = red_md_by_no[no].read_text(encoding='utf-8')
         (folder / f'附件{no}.md').write_text(md, encoding='utf-8')
-        (folder / f'附件{no}.original.docx').write_bytes(data)
+        (folder / f'附件{no}.docx').write_bytes(data)
         cls = attachment_class(md)
-        a_title = orig_by_no[no].title if meta_from == 'original' else (md.splitlines()[0].split('：', 1)[-1] if md else '')
+        if meta_from == 'original' and no in orig_by_no:
+            a_title = orig_by_no[no].title
+        else:
+            first = md.splitlines()[0] if md else ''
+            a_title = first.split('：', 1)[1].strip() if '：' in first else ''
         att = {'doc_kind': 'attachment', 'sort_no': no, 'attachment_class': cls,
-               'title': f"{meta.get('title') or Path(source).stem} 附件{no}" + (f' {a_title}' if a_title else ''),
-               'md': f'附件{no}.md' if cls != 'original' else None, 'original': f'附件{no}.original.docx',
+               'title': f"{meta.get('title') or red_docx.stem} 附件{no}" + (f' {a_title}' if a_title else ''),
+               'md': f'附件{no}.md' if cls != 'original' else None, 'file': f'附件{no}.docx',
                'article_index': None, 'content_hash': sha256(data),
                **(text_stats(md) if cls != 'original' else text_stats(''))}
         documents.append(att)
         packed.attachments.append({'no': no, 'title': a_title, 'class': cls, 'tokens': att['text_tokens']})
-    manifest = {'source': source, 'redacted': output, 'meta': meta, 'documents': documents,
+    manifest = {'source': source if files == 'original' else None, 'redacted': output, 'files': files,
+                'meta_from': meta_from, 'meta': meta, 'documents': documents,
                 'packaged_at': _dt.datetime.now().isoformat(timespec='seconds')}
     (folder / 'manifest.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=1), encoding='utf-8')
     return packed
@@ -315,10 +336,13 @@ SHEET_COLUMNS = ['导入', '包内目录', '制度编号', '制度名称', '版�
 def main(argv: Optional[Sequence[str]] = None) -> int:
     ap = argparse.ArgumentParser(description='把一次脱敏的结果整理成导入包')
     ap.add_argument('--run', required=True, type=Path, help='一次脱敏的结果目录：脱敏结果/<时间>')
-    ap.add_argument('--originals', required=True, type=Path, help='原件目录（脱敏时的 --input）')
+    ap.add_argument('--originals', type=Path,
+                    help='原件目录（脱敏时的 --input）。只在 --files original 或 --meta original 时需要')
+    ap.add_argument('--files', choices=('redacted', 'original'), default='redacted',
+                    help='上传到系统的文件：脱敏后的 docx（默认）还是原件')
     ap.add_argument('--output', type=Path, default=Path('导入包'), help='导入包根目录，默认 ./导入包')
-    ap.add_argument('--meta', choices=('original', 'redacted'), default='original',
-                    help='制度名称、文号等元数据取原文（默认，按设计文档）还是脱敏后的写法')
+    ap.add_argument('--meta', choices=('original', 'redacted'),
+                    help='制度名称、文号等元数据取原文还是脱敏后的写法；默认：给了 --originals 取原文，否则取脱敏后的')
     args = ap.parse_args(argv)
     docs = args.run / '脱敏文件'
     listing = args.run / '内部留存-勿外发' / '文件清单.json'
@@ -326,7 +350,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         raise SystemExit(f'不是一次脱敏的结果目录（没有「脱敏文件」）：{args.run}')
     if not listing.exists():
         raise SystemExit(f'没有 {listing}：请用最新版的脱敏工具重新运行一次脱敏，再打包。')
-    if not args.originals.is_dir():
+    args.meta = args.meta or ('original' if args.originals else 'redacted')
+    if (args.files == 'original' or args.meta == 'original') and not args.originals:
+        raise SystemExit('用原件（--files original）或原文元数据（--meta original）时，要给 --originals 原件目录。')
+    if args.originals and not args.originals.is_dir():
         raise SystemExit(f'原件目录不存在：{args.originals}')
     entries = json.loads(listing.read_text(encoding='utf-8'))['files']
     out_root, n = args.output / args.run.name, 2
@@ -334,7 +361,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         out_root, n = args.output / f'{args.run.name}-{n}', n + 1
     out_root.mkdir(parents=True)
 
-    packed = [pack_one(e, docs, args.originals, out_root, args.meta) for e in entries]
+    packed = [pack_one(e, docs, args.originals, out_root, args.meta, args.files) for e in entries]
     ok = [p for p in packed if not p.rejected]
     with (out_root / '批次清单.csv').open('w', newline='', encoding='utf-8-sig') as f:
         wr = csv.writer(f)
@@ -356,7 +383,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print(f'  拒绝  {p.folder or p.source}  ← {p.rejected}')
     print(f'批次清单：{out_root / "批次清单.csv"}  ← 核对、补齐后再导入')
     print(f'检查报告：{out_root / "检查报告.md"}')
-    print('导入包含原件，不要外发、不要放进 Git。')
+    print('导入包含原件，不要外发、不要放进 Git。' if args.files == 'original' or args.meta == 'original'
+          else '导入包只含脱敏后的文件和元数据，不含原件。')
     return 0
 
 
@@ -364,7 +392,8 @@ def write_report(path: Path, packed: List[Packed], args) -> None:
     ok = [p for p in packed if not p.rejected]
     lines = ['# 打包检查报告（内部留存，勿外发）', '',
              f'- 时间：{_dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}',
-             f'- 脱敏结果：{args.run}', f'- 原件目录：{args.originals}',
+             f'- 脱敏结果：{args.run}', f'- 原件目录：{args.originals or "（未使用）"}',
+             f'- 上传的文件：{"原件" if args.files == "original" else "脱敏后的 docx（不含原文）"}',
              f'- 元数据取自：{"原文" if args.meta == "original" else "脱敏后的文字"}',
              f'- 打包 {len(ok)} 份，拒绝 {len(packed) - len(ok)} 份', '',
              '批次清单里「问题」一栏不为空的，请对照原件确认；制度编号、名称、版本号、生效日期必须填齐才能导入。', '']

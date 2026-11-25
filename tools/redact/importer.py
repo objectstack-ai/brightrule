@@ -160,6 +160,23 @@ class Api:
             return []
 
 
+# ── 进度 ──────────────────────────────────────────────────────────────────
+class Progress:
+    """逐份显示进度：「[已处理/总数] 制度」。云环境每次请求都慢，没有进度不知道到哪了。"""
+
+    def __init__(self, total: int):
+        self.total, self.done = total, 0
+        try:
+            sys.stdout.reconfigure(line_buffering=True)   # 管道里也逐行输出，不攒着
+        except (AttributeError, ValueError):
+            pass
+
+    def next(self) -> str:
+        """处理完一份调用，返回「[3/126]」。"""
+        self.done += 1
+        return f'[{self.done}/{self.total}]'
+
+
 # ── 计划 ──────────────────────────────────────────────────────────────────
 @dataclass
 class RowPlan:
@@ -381,6 +398,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     rows = [r for r in read_sheet(package) if r.get('导入', '是') == '是']
     print(('写入' if args.apply else '预演（不写入）') + f'：{len(rows)} 份制度 → {args.url}')
     plans: List[RowPlan] = []
+    progress = Progress(len(rows))
     for row in rows:
         try:
             rp = plan_row(api, package, row, options)
@@ -401,7 +419,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 rp.rejected = f'写入中断：{e}（已写入的部分保留；修正后重跑会接着做）'
         plans.append(rp)
         mark = '✗' if rp.rejected else ('·' if not rp.steps else '✓')
-        print(f'  {mark} {rp.folder}  {rp.policy_no} {rp.version_no}')
+        print(f'{progress.next()} {mark} {rp.folder}  {rp.policy_no} {rp.version_no}')
         for a in ([f'拒绝：{rp.rejected}'] if rp.rejected else rp.actions) + rp.notes:
             print(f'      {a}')
     write_report(package, plans, args)

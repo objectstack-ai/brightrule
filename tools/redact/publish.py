@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from importer import Api, ApiError, AuthError, find_policies, open_package, read_sheet
+from importer import Api, ApiError, AuthError, Progress, find_policies, open_package, read_sheet
 
 
 def plan(api: Api, package: Path, row: Dict[str, str]) -> Tuple[str, str, Optional[str]]:
@@ -64,6 +64,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     rows = [r for r in read_sheet(package) if r.get('导入', '是') == '是']
     print(('发布' if args.apply else '预演（不写入）') + f'：{len(rows)} 份制度 → {args.url}')
     counts = {'✓': 0, '·': 0, '✗': 0}
+    progress = Progress(len(rows))
     for row in rows:
         try:
             mark, note, vid = plan(api, package, row)
@@ -74,7 +75,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         except ApiError as e:
             mark, note = '✗', f'失败：{e}（重跑会接着做）'
         counts[mark] += 1
-        print(f'  {mark} {row.get("包内目录", "")}  {row.get("版本号", "")}\n      {note}')
+        print(f'{progress.next()} {mark} {row.get("包内目录", "")}  {row.get("版本号", "")}\n      {note}')
     print(f'{"已发布" if args.apply else "将发布"} {counts["✓"]} 份，不用动 {counts["·"]} 份，拒绝 {counts["✗"]} 份。')
     if not args.apply and counts['✓']:
         print('确认无误后，在命令末尾加 --apply 发布。发布后员工即可看到、问到。')

@@ -15,7 +15,7 @@ import argparse
 import sys
 from typing import Dict, List, Optional, Sequence
 
-from importer import Api, ApiError, AuthError
+from importer import Api, ApiError, AuthError, Progress
 
 # 开发环境自带的示例制度（虚构，src/data/seed.ts），按制度编号删
 SAMPLE_POLICY_NOS = ['FIN-001', 'HR-002', 'IT-003', 'CMP-004', 'CMP-005']
@@ -61,7 +61,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     try:
         policies = targets(api, nos, args.title)
         failed = 0
+        progress = Progress(len(policies))
         for p in policies:
+            print(progress.next(), end='')
             steps = plan(api, p)
             if not args.apply:
                 continue

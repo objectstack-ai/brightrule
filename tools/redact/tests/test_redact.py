@@ -628,18 +628,19 @@ class PackageTest(unittest.TestCase):
         self.src = self.tmp / '原件'
         _policy_docx(self.src / '财务' / '差旅示例办法.docx')
         self.dict = self.tmp / '词典.csv'
-        self.dict.write_text('类别,原文,替换为,备注\n集团,华东示例集团,本集团,\n人名,王某某,,\n', encoding='utf-8')
+        self.dict.write_text('类别,原文,替换为,备注\n集团,华东示例控股集团有限公司,本集团,\n集团,华东示例集团,本集团,\n'
+                             '公司,华东示例物流有限公司,,\n人名,王某某,,\n', encoding='utf-8')
 
     def tearDown(self):
         shutil.rmtree(self.tmp)
 
-    def redact_and_pack(self):
+    def redact_and_pack(self, *extra):
         import package
         out = self.tmp / '结果'
         redact.main(['--input', str(self.src), '--dict', str(self.dict), '--output', str(out)])
-        run = sorted(out.iterdir())[-1]
-        self.assertTrue((run / '内部留存-勿外发' / '文件清单.json').exists())
-        package.main(['--run', str(run), '--originals', str(self.src), '--output', str(self.tmp / '导入包')])
+        self.run_dir = sorted(out.iterdir())[-1]
+        self.assertTrue((self.run_dir / '内部留存-勿外发' / '文件清单.json').exists())
+        package.main(['--run', str(self.run_dir), '--output', str(self.tmp / '导入包'), *extra])
         return sorted((self.tmp / '导入包').iterdir())[-1]
 
     def test_package_builds_manifest_sheet_and_report(self):
@@ -661,15 +662,29 @@ class PackageTest(unittest.TestCase):
         self.assertEqual(first['chapter'], '第一章　总则')
         self.assertEqual(body['text_chars'], len(text))
         self.assertEqual(body['text_tokens'], -(-len(text) * 2 // 3))
-        self.assertEqual(body['content_hash'], hashlib.sha256((self.src / '财务' / '差旅示例办法.docx').read_bytes()).hexdigest())
+        # 默认上传脱敏后的 docx：哈希按它算，导入包里没有原文
+        red_docx = self.run_dir / '脱敏文件' / '财务' / '差旅示例办法.docx'
+        self.assertEqual(body['content_hash'], hashlib.sha256(red_docx.read_bytes()).hexdigest())
+        self.assertEqual((folder / '正文.docx').read_bytes(), red_docx.read_bytes())
         self.assertEqual(att['attachment_class'], 'form')
-        self.assertTrue((folder / '附件1.original.docx').exists())
+        self.assertEqual(att['title'], '差旅示例办法 附件1 出差申请单')
+        for f in pkg.rglob('*.docx'):
+            self.assertNotIn('华东示例', docx_text(f), f)
         sheet = (pkg / '批次清单.csv').read_text(encoding='utf-8-sig')
         self.assertIn('缺条：第3条', sheet)
         # 同一份原件再打包一次，附件原件的哈希不变（导入去重靠它）
         pkg2 = self.redact_and_pack()
         m2 = json.loads((pkg2 / '财务' / '差旅示例办法' / 'manifest.json').read_text(encoding='utf-8'))
         self.assertEqual([d['content_hash'] for d in m2['documents']], [d['content_hash'] for d in m['documents']])
+
+    def test_package_can_upload_originals(self):
+        import json
+        pkg = self.redact_and_pack('--originals', str(self.src), '--files', 'original')
+        folder = pkg / '财务' / '差旅示例办法'
+        m = json.loads((folder / 'manifest.json').read_text(encoding='utf-8'))
+        src = self.src / '财务' / '差旅示例办法.docx'
+        self.assertEqual(m['documents'][0]['content_hash'], hashlib.sha256(src.read_bytes()).hexdigest())
+        self.assertIn('华东示例', docx_text(folder / '附件1.docx') + docx_text(folder / '正文.docx'))
 
     def test_import_plan_is_idempotent_and_guards_current_versions(self):
         import importer

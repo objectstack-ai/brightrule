@@ -54,9 +54,9 @@ PLACE_BAD_CHAR = set('的和与及或在是为对由从向给按将把被以于�
 PROVINCES = ('北京 天津 上海 重庆 河北 山西 辽宁 吉林 黑龙江 江苏 浙江 安徽 福建 江西 山东 河南 湖北 湖南 广东 海南 四川 贵州 云南 '
              '陕西 甘肃 青海 台湾 内蒙古 广西 西藏 宁夏 新疆 香港 澳门').split()
 
-# 文号：机关代字〔年份〕序号号，如 BCB字﹝2025﹞3号、某政发〔2024〕12号
+# 文号：机关代字〔年份〕序号号，如 HDB字﹝2025﹞3号、某政发〔2024〕12号
 DOC_NO = re.compile(r'([A-Za-z一-龥]{1,12}?)\s*[〔﹝\[［【(（]\s*((?:19|20)\d{2})\s*[〕﹞\]］】)）]\s*(\d{1,4})\s*号')
-# 编码：带两个以上连字符、同时有字母和数字，如 C集-JY-ZHB-03-07-01、HT-2024-0012
+# 编码：带两个以上连字符、同时有字母和数字，如 华集-XZ-GL-03-07-01、HT-2024-0012
 CODE = re.compile(r'(?<![A-Za-z0-9-])[A-Za-z0-9一-龥]{1,8}(?:[-－_][A-Za-z0-9]{1,10}){2,}(?![A-Za-z0-9])')
 # 独立的英文大写缩写（常是机构或系统代号）
 ABBR = re.compile(r'(?<![A-Za-z])[A-Z]{2,8}(?![A-Za-z])')
@@ -159,14 +159,14 @@ class Scan:
                 self.add('地名', name, '中', '地名（××省 / 市 / 县 / 区）', file, para)
         for m in DOC_NO.finditer(para):
             prefix = trim_lead(m.group(1))
-            # 「B市财办」「A省国资考核字」：地名之后是通用的机关代字，替换地名就够了；「B市BCGO」只留 BCGO
+            # 「B市财办」「A省国资考核字」：地名之后是通用的机关代字，替换地名就够了；「B市HDGO」只留 HDGO
             pm = re.match(r'^[A-Z一-龥]{1,6}?[省市县区]', prefix)
             if pm:
                 prefix = prefix[pm.end():]
                 if re.fullmatch(r'[一-龥]{1,6}', prefix):
                     continue
             if prefix and not re.fullmatch(r'[一-龥]{0,2}', prefix):
-                # 机关代字（如 BCGO、B市财办）替换掉，文号整体就认不出单位了，不必逐个列文号
+                # 机关代字（如 HDGO、B市财办）替换掉，文号整体就认不出单位了，不必逐个列文号
                 self.add('文号', prefix, '高', '公文文号里的机关代字，常是单位简称', file, para)
             else:
                 full = f'{prefix}{m.group(0)[len(m.group(1)):]}'.strip()

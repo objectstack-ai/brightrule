@@ -980,6 +980,58 @@ class PackageTest(unittest.TestCase):
         stats = {r[0]: r[1] for r in list(wb['字段统计'].iter_rows(values_only=True))[1:]}
         self.assertEqual(stats['制度编码'], 2)
 
+    def test_scanned_pdf_is_ocrd_redacted_and_flagged(self):
+        import json, package, pdf_ocr
+        from pdf_ocr import Line
+        (self.src / '扫描').mkdir()
+        (self.src / '扫描' / '华东示例集团收费标准.pdf').write_bytes(b'%PDF-1.4 fake')
+        pages = [[Line('华东示例集团收费标准', 0.1, 0.5), Line('第一章 总则', 0.1, 0.3),
+                  Line('第一条 为规范华东示例集团业务收费，根据有关规定，结合', 0.1, 0.9), Line('实际，制定本标准。', 0.1, 0.4),
+                  Line('- 1 -', 0.45, 0.55)],
+                 [Line('第二条 本标准自2025年5月26日起施行。', 0.1, 0.6)]]
+        saved = (pdf_ocr.unavailable_reason, pdf_ocr.ocr_pdf)
+        pdf_ocr.unavailable_reason, pdf_ocr.ocr_pdf = (lambda: None), (lambda path: pages)
+        self.addCleanup(lambda: (setattr(pdf_ocr, 'unavailable_reason', saved[0]), setattr(pdf_ocr, 'ocr_pdf', saved[1])))
+        pkg = self.redact_and_pack()
+        docs = self.run_dir / '脱敏文件' / '扫描'
+        mds = list(docs.glob('*.md'))
+        self.assertEqual(len(mds), 1)
+        self.assertEqual(list(docs.glob('*.pdf')) + list(docs.glob('*.docx')), [])   # 只输出 .md
+        md = mds[0].read_text(encoding='utf-8')
+        self.assertNotIn('华东示例', md)
+        self.assertIn('**第一条** 为规范', md)
+        self.assertIn('结合实际，制定本标准。', md)                 # 跨行拼回一段
+        self.assertNotIn('- 1 -', md)                                # 页码去掉
+        report = (self.run_dir / '内部留存-勿外发' / '报告.md').read_text(encoding='utf-8')
+        self.assertIn('OCR 识别，需人工核对', report)
+        listing = json.loads((self.run_dir / '内部留存-勿外发' / '文件清单.json').read_text(encoding='utf-8'))
+        self.assertTrue(any(f['ocr'] and f['output'].endswith('.md') for f in listing['files']))
+        sheet = (pkg / '批次清单.csv').read_text(encoding='utf-8-sig')
+        self.assertIn('扫描件 OCR 识别', sheet)
+        self.assertEqual(list(pkg.rglob('正文.docx')), [])
+
+    def test_pdf_is_skipped_with_a_reason_when_ocr_is_unavailable(self):
+        import pdf_ocr
+        (self.src / '扫描.pdf').write_bytes(b'%PDF-1.4 fake')
+        saved = pdf_ocr.unavailable_reason
+        pdf_ocr.unavailable_reason = lambda: '扫描版 PDF 需要在 Mac 上运行'
+        self.addCleanup(lambda: setattr(pdf_ocr, 'unavailable_reason', saved))
+        self.redact_and_pack()
+        report = (self.run_dir / '内部留存-勿外发' / '报告.md').read_text(encoding='utf-8')
+        self.assertIn('扫描.pdf', report)   # 列在跳过的文件里
+
+    def test_non_text_content_is_counted_per_file(self):
+        import csv
+        _policy_docx(self.src / '财务' / '差旅示例办法.docx', with_images=True)
+        self.redact_and_pack()
+        path = self.run_dir / '非文字内容统计.csv'
+        with path.open(encoding='utf-8-sig') as f:
+            rows = list(csv.DictReader(f))
+        body = next(r for r in rows if r['位置'] == '正文')
+        self.assertEqual((body['图片'], body['图表'], body['公式']), ('1', '1', '1'))
+        self.assertTrue(any(r['位置'] != '正文' and r['图片'] == '1' for r in rows))   # 附件2 的图片
+        self.assertNotIn('华东示例', path.read_text(encoding='utf-8-sig'))            # 用脱敏后的文件名
+
     def test_package_accepts_the_docs_folder_and_import_points_to_package(self):
         import importer, package
         out = self.tmp / '结果'

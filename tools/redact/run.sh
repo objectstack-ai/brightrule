@@ -17,8 +17,8 @@ if [ ! -x .venv/bin/python ]; then
   .venv/bin/pip install --quiet --upgrade pip
   .venv/bin/pip install --quiet -r requirements.txt
 fi
-# 依赖有新增时（如 meta 用的 openpyxl）补装一次
-if ! .venv/bin/python -c 'import lxml, openpyxl' 2>/dev/null; then
+# 依赖有新增时（如 meta 用的 openpyxl、Mac 上识别扫描版 PDF 用的 Vision）补装一次
+if ! .venv/bin/python -c 'import sys, lxml, openpyxl; sys.platform != "darwin" or __import__("Vision") and __import__("Quartz")' 2>/dev/null; then
   echo "安装新增的依赖……"
   .venv/bin/pip install --quiet -r requirements.txt
 fi

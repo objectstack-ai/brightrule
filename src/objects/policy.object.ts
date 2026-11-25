@@ -33,7 +33,6 @@ export const Policy = ObjectSchema.create({
     category: Field.select({
       label: '制度分类',
       group: 'basic',
-      description: '按制度体系的分类；导入时取自制度信息表的「制度类别」',
       // The values of the first five predate this list and stay as they were
       // (seed data and stored records use them); only their labels moved to the
       // policy system's own wording.
@@ -57,12 +56,11 @@ export const Policy = ObjectSchema.create({
     summary: Field.textarea({
       label: '目录摘要',
       group: 'basic',
-      description: '一两句话说明本制度管什么，供按目录挑选制度；可能为空，为空不代表没有正文',
+      description: '一两句话说明本制度管什么',
     }),
     status: Field.select({
       label: '状态',
       group: 'effect',
-      description: 'published = 已发布，可据以作答；draft = 草稿，尚无现行版本；revising = 修订中；abolished = 已废止，不再有效',
       options: [
         { label: '草稿', value: 'draft', color: '#6B7280', default: true },
         { label: '已发布', value: 'published', color: '#10B981' },
@@ -70,11 +68,12 @@ export const Policy = ObjectSchema.create({
         { label: '已废止', value: 'abolished', color: '#EF4444' },
       ],
     }),
+    // 版本设为现行时由 src/qa/version-current.hook.ts 自动填写，不在表单里手填（hidden 只影响界面，接口照常读写）。
+    // AI 怎么用它读正文，写在 src/skills/policy-inquiry.skill.ts。
     current_version: Field.lookup('brightrule_policy_version', {
       label: '现行版本',
       group: 'effect',
-      description:
-        '指向现行版本记录（由版本设为现行时自动填写）；get_record 读这条版本即得正文 body_md，版本号 version_no 写在引用出处的制度名之后',
+      hidden: true,
     }),
     effective_date: Field.date({ label: '生效日期', group: 'effect' }),
     next_review_date: Field.date({ label: '下次复审日', group: 'effect' }),

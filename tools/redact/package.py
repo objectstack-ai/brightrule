@@ -344,6 +344,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument('--meta', choices=('original', 'redacted'),
                     help='制度名称、文号等元数据取原文还是脱敏后的写法；默认：给了 --originals 取原文，否则取脱敏后的')
     args = ap.parse_args(argv)
+    if args.run.name in ('脱敏文件', '内部留存-勿外发'):   # 填到了结果目录里面一层：退回结果目录
+        args.run = args.run.parent
     docs = args.run / '脱敏文件'
     listing = args.run / '内部留存-勿外发' / '文件清单.json'
     if not docs.is_dir():

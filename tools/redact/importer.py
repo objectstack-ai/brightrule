@@ -273,6 +273,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if '内部留存' in str(package):
         raise SystemExit('拒绝：导入只读导入包，不读「内部留存-勿外发」。')
     if not (package / '批次清单.csv').exists():
+        if package.name == '脱敏文件' or (package / '脱敏文件').is_dir():
+            raise SystemExit(f'这是脱敏结果，不是导入包：先运行 ./run.sh package --run <脱敏结果/时间>，'
+                             f'再把它生成的「导入包/<时间>」目录交给 --package。（{args.package}）')
         raise SystemExit(f'不是导入包（没有 批次清单.csv）：{args.package}')
     api = Api(args.url)
     options = api.category_options()

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import csv
+import os
 import hashlib
 import shutil
 import subprocess
@@ -741,6 +742,18 @@ class PackageTest(unittest.TestCase):
         rp = importer.plan_row(api, pkg2, row2, [])
         self.assertIsNone(rp.rejected)
         self.assertIn('新建版本', ' '.join(rp.actions))
+
+    def test_package_accepts_the_docs_folder_and_import_points_to_package(self):
+        import importer, package
+        out = self.tmp / '结果'
+        redact.main(['--input', str(self.src), '--dict', str(self.dict), '--output', str(out)])
+        run = sorted(out.iterdir())[-1]
+        package.main(['--run', str(run / '脱敏文件'), '--output', str(self.tmp / '导入包')])
+        self.assertTrue(any((self.tmp / '导入包').rglob('批次清单.csv')))
+        os.environ['BRIGHTRULE_TOKEN'] = 'test'
+        with self.assertRaises(SystemExit) as e:
+            importer.main(['--package', str(run / '脱敏文件'), '--url', 'http://test'])
+        self.assertIn('先运行 ./run.sh package', str(e.exception))
 
     def test_import_refuses_internal_folder(self):
         import importer

@@ -429,6 +429,20 @@ class RobustnessTest(unittest.TestCase):
 
 
 class ScanTest(unittest.TestCase):
+    def test_short_forms_share_the_full_names_code_whatever_the_order(self):
+        import scan
+        sc = scan.Scan([])
+        # 简称先出现、中间写法再出现、全称最后才出现：仍是一组
+        for para in ('经C集团研究决定。', '由B市C集团负责。', '本办法适用于华东示例集团。',
+                     'B市C集团有限责任公司  2025年1月9日印发', '华东示例集团有限公司文件'):
+            sc.scan_paragraph('a.docx', para)
+        rows = {c.text: c for c in sc.finish()}
+        self.assertEqual({rows[t].replacement for t in ('C集团', 'B市C集团', 'B市C集团有限责任公司')},
+                         {rows['B市C集团有限责任公司'].replacement})
+        self.assertEqual(rows['C集团'].group, 'B市C集团有限责任公司')
+        self.assertEqual(rows['华东示例集团'].replacement, rows['华东示例集团有限公司'].replacement)
+        self.assertNotIn('于华东示例集团', rows)
+
     def test_scan_proposes_a_usable_dictionary(self):
         import scan
         tmp = Path(tempfile.mkdtemp())

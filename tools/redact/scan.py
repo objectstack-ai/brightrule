@@ -191,31 +191,56 @@ class Scan:
 
     def finish(self) -> List[Candidate]:
         texts = [p for _f, p in self.paragraphs]
-        # 机构简称：全称去掉法定后缀、再去掉地名前缀，在文档里确实出现过的才列出
-        for c in list(self.cands.values()):
-            if c.category in ('集团', '公司', '机构') and c.group is None:
-                c.group = c.text
-                for alias in aliases(c.text):
-                    if alias.lower() in self.known or len(alias) < 2:
-                        continue
-                    hits = [(f, p) for f, p in self.paragraphs if alias in p]
-                    if not hits:
-                        continue
-                    key = (c.category, alias)
-                    a = self.cands.get(key) or Candidate(c.category, alias, '高', f'「{c.text}」的简称', group=c.text)
-                    if a.group is None or a.group == a.text:
-                        a.group, a.confidence, a.reason = c.text, '高', f'「{c.text}」的简称'
-                    for f, p in hits:
-                        a.files.add(f)
-                        if not a.example:
-                            i = p.find(alias)
-                            a.example = p[max(0, i - 12): i + len(alias) + 12]
-                    self.cands[key] = a
-                # 名称里的地名前缀（如「B市」）提高置信度：它能指认公司所在地
-                m = re.match(r'^([A-Z一-龥]{1,6}?[省市县区])', c.text)
-                if m and ('地名', m.group(1)) in self.cands:
-                    p = self.cands[('地名', m.group(1))]
-                    p.confidence, p.reason = '高', f'出现在机构名「{c.text}」里，能指认所在地'
+        # 机构简称：全称去掉法定后缀、再去掉地名前缀，在文档里确实出现过的才列出。
+        # 全称、简称、简称的简称（B市C集团有限责任公司 → B市C集团 → C集团）连成一组，共用一个替换值；
+        # 组名取组里最长的写法。先处理长的，保证简称挂到全称上。
+        parent: Dict[str, str] = {}
+
+        def root(t: str) -> str:
+            while parent.get(t, t) != t:
+                t = parent[t]
+            return t
+
+        def union(a: str, b: str) -> None:
+            ra, rb = root(a), root(b)
+            if ra != rb:
+                keep, drop = (ra, rb) if (len(ra), ra) >= (len(rb), rb) else (rb, ra)
+                parent[drop] = keep
+
+        orgs = sorted((c for c in self.cands.values() if c.category in ('集团', '公司', '机构')),
+                      key=lambda c: -len(c.text))
+        for c in orgs:
+            parent.setdefault(c.text, c.text)
+            for alias in aliases(c.text):
+                if alias.lower() in self.known or len(alias) < 2:
+                    continue
+                hits = [(f, p) for f, p in self.paragraphs if alias in p]
+                if not hits:
+                    continue
+                key = (c.category, alias)
+                a = self.cands.get(key)
+                if a is None:
+                    a = self.cands[key] = Candidate(c.category, alias, '高', f'「{c.text}」的简称')
+                    orgs.append(a)
+                elif a.confidence != '高':
+                    a.confidence, a.reason = '高', f'「{c.text}」的简称'
+                for f, p in hits:
+                    a.files.add(f)
+                    if not a.example:
+                        i = p.find(alias)
+                        a.example = p[max(0, i - 12): i + len(alias) + 12]
+                parent.setdefault(alias, alias)
+                union(c.text, alias)
+            # 名称里的地名前缀（如「B市」）提高置信度：它能指认公司所在地
+            m = re.match(r'^([A-Z一-龥]{1,6}?[省市县区])', c.text)
+            if m and ('地名', m.group(1)) in self.cands:
+                p = self.cands[('地名', m.group(1))]
+                p.confidence, p.reason = '高', f'出现在机构名「{c.text}」里，能指认所在地'
+        for c in self.cands.values():
+            if c.category in ('集团', '公司', '机构'):
+                c.group = root(c.text)
+                if c.group != c.text and c.reason.startswith('「'):
+                    c.reason = f'「{c.group}」的简称'
         # 计数：按最终词在所有段落里出现的次数（不重叠计数）
         for c in self.cands.values():
             c.count = sum(p.count(c.text) for p in texts) or len(c.files)
@@ -408,6 +433,7 @@ def paragraphs_of(path: Path) -> Tuple[List[str], List[str], List[str]]:
                 if text.strip():
                     paras.append(text)
             paras += [el.get(a) for el in root.iter(f'{{{WP}}}docPr') for a in ('descr', 'title') if el.get(a)]
+            paras += [el.get('string') for el in root.iter('{urn:schemas-microsoft-com:vml}textpath') if el.get('string')]  # 艺术字
         if 'docProps/core.xml' in names:
             root = _parse(z.read('docProps/core.xml'))
             people += [el.text for tag in (f'{{{DC}}}creator', f'{{{CP}}}lastModifiedBy') for el in root.iter(tag) if el.text]

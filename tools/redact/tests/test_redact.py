@@ -742,6 +742,19 @@ class PackageTest(unittest.TestCase):
         rp = importer.plan_row(api, pkg2, row2, [])
         self.assertIsNone(rp.rejected)
         self.assertIn('新建版本', ' '.join(rp.actions))
+        # 没有制度编号、没有生效日期：照样导入，按名称对应，重复导入不变
+        row3 = dict(importer.read_sheet(pkg)[0], 制度编号='', 生效日期='', 制度名称='无编号示例办法')
+        rp = importer.plan_row(api, pkg, row3, [])
+        self.assertIsNone(rp.rejected)
+        self.assertIn('新建制度（草稿）', rp.actions)
+        importer.apply_row(api, rp)
+        made = [r for r in api.rows['brightrule_policy'] if r['title'] == '无编号示例办法']
+        self.assertEqual(len(made), 1)
+        self.assertNotIn('policy_no', made[0])
+        self.assertNotIn('effective_date', made[0])
+        self.assertEqual(importer.plan_row(api, pkg, row3, []).steps, [])
+        # 缺名称仍然拒绝
+        self.assertIn('制度名称', importer.plan_row(api, pkg, dict(row3, 制度名称=''), []).rejected)
 
     def test_package_accepts_the_docs_folder_and_import_points_to_package(self):
         import importer, package

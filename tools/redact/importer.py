@@ -7,14 +7,14 @@
     python3 importer.py --package 导入包/<时间> --url https://<系统地址> --apply    # 写入
 
 按批次清单里「导入 = 是」的行，依次：
-    制度（按制度编号找，没有就新建为草稿）→ 版本（按制度 + 版本号找，没有就新建为草稿）
+    制度（按制度编号找；没有编号的按名称找；都没有就新建为草稿）→ 版本（按制度 + 版本号找，没有就新建为草稿）
     → 版本文档（按 类型 + 序号 找：没有就上传文件并新建；内容哈希或正文变了就更新；一样就跳过）
     上传的文件是导入包里的 正文.docx / 附件N.docx：默认是脱敏后的 docx，打包时用 --files original 才是原件。
 规则：
     - 同一批导两次，结果不变（全部跳过）；
     - 版本已是「现行」而内容有变化（文档增减、原件或正文不同）：整行拒绝，请用新版本号导入；
     - 只读导入包；路径里有「内部留存」的一律拒绝；
-    - 制度编号、名称、版本号、生效日期缺任何一项，这一行拒绝；
+    - 制度名称、版本号缺任何一项，这一行拒绝；制度编号、生效日期可以为空（原文没有就不填）；
     - 导入的版本都是草稿；核对后由管理员在系统里设为现行。
 认证：环境变量 BRIGHTRULE_API_KEY（请求头 x-api-key），或 BRIGHTRULE_TOKEN（登录会话令牌，Authorization: Bearer）。
 """
@@ -123,6 +123,8 @@ class RowPlan:
     rejected: Optional[str] = None
     notes: List[str] = field(default_factory=list)
     steps: List[Tuple] = field(default_factory=list)   # 写入时执行
+    policy_id: Optional[str] = None    # 预演时找到的已有记录
+    version_id: Optional[str] = None
 
 
 def read_sheet(package: Path) -> List[Dict[str, str]]:
@@ -153,11 +155,12 @@ def map_category(text: str, options: List[Tuple[str, str]]) -> Optional[str]:
 
 def plan_row(api: Api, package: Path, row: Dict[str, str], options: List[Tuple[str, str]]) -> RowPlan:
     rp = RowPlan(row.get('包内目录', ''), row.get('制度编号', ''), row.get('制度名称', ''), row.get('版本号', ''))
-    missing = [k for k in ('制度编号', '制度名称', '版本号', '生效日期') if not row.get(k)]
+    missing = [k for k in ('制度名称', '版本号') if not row.get(k)]
     if missing:
         rp.rejected = '批次清单缺 ' + '、'.join(missing)
         return rp
-    if not DATE.match(row['生效日期']):
+    effective = row.get('生效日期') or None
+    if effective and not DATE.match(effective):
         rp.rejected = f'生效日期「{row["生效日期"]}」不是 YYYY-MM-DD'
         return rp
     folder = package / rp.folder
@@ -167,7 +170,9 @@ def plan_row(api: Api, package: Path, row: Dict[str, str], options: List[Tuple[s
         rp.rejected = f'导入包里没有 {rp.folder}/manifest.json'
         return rp
 
-    policy_fields = {'title': row['制度名称'], 'policy_no': row['制度编号']}
+    policy_fields = {'title': row['制度名称']}
+    if rp.policy_no:
+        policy_fields['policy_no'] = rp.policy_no
     for col, key in (('归口部门', 'department'), ('发文单位', 'issuing_unit')):
         if row.get(col):
             policy_fields[key] = row[col]
@@ -178,14 +183,25 @@ def plan_row(api: Api, package: Path, row: Dict[str, str], options: List[Tuple[s
         else:
             rp.notes.append(f'制度类别「{row["制度类别"]}」不在系统的选项里，没有填')
 
-    found = api.find('brightrule_policy', {'policy_no': rp.policy_no}, 'id,title,policy_no,department,issuing_unit,category,status')
+    select = 'id,title,policy_no,department,issuing_unit,category,status'
+    if rp.policy_no:
+        found = api.find('brightrule_policy', {'policy_no': rp.policy_no}, select)
+        key = f'制度编号都是 {rp.policy_no}'
+    else:
+        # 没有制度编号：按名称找系统里同样没有编号的制度
+        found = [p for p in api.find('brightrule_policy', {'title': rp.title}, select) if not p.get('policy_no')]
+        key = f'没有制度编号、名称都是「{rp.title}」'
+        rp.notes.append('没有制度编号，按制度名称对应；以后补了编号，系统里也请一并补上')
     policy = found[0] if found else None
     if len(found) > 1:
-        rp.rejected = f'系统里有 {len(found)} 份制度编号都是 {rp.policy_no}，请先处理重复'
+        rp.rejected = f'系统里有 {len(found)} 份制度{key}，请先处理重复'
         return rp
+    if policy is not None:
+        rp.policy_id = policy['id']
     if policy is None:
         rp.actions.append('新建制度（草稿）')
-        rp.steps.append(('create_policy', {**policy_fields, 'status': 'draft', 'effective_date': row['生效日期']}))
+        rp.steps.append(('create_policy', {**policy_fields, 'status': 'draft',
+                                           **({'effective_date': effective} if effective else {})}))
     else:
         changed = {k: v for k, v in policy_fields.items() if policy.get(k) != v}
         if changed:
@@ -199,10 +215,12 @@ def plan_row(api: Api, package: Path, row: Dict[str, str], options: List[Tuple[s
         vs = api.find('brightrule_policy_version', {'policy': policy['id'], 'version_no': rp.version_no},
                       'id,title,version_no,version_status,effective_date')
         version = vs[0] if vs else None
+        rp.version_id = version['id'] if version else None
     if version is None:
         rp.actions.append(f'新建版本 {rp.version_no}（草稿）')
         rp.steps.append(('create_version', {'title': f'{rp.title} {rp.version_no}', 'version_no': rp.version_no,
-                                            'version_status': 'draft', 'effective_date': row['生效日期'],
+                                            'version_status': 'draft',
+                                            **({'effective_date': effective} if effective else {}),
                                             **({'change_note': f'导入批次 {package.name}'})}))
     existing: Dict[Tuple[str, int], Dict] = {}
     if version is not None:
@@ -251,7 +269,7 @@ def plan_row(api: Api, package: Path, row: Dict[str, str], options: List[Tuple[s
 
 
 def apply_row(api: Api, rp: RowPlan) -> None:
-    policy_id = version_id = None
+    policy_id, version_id = rp.policy_id, rp.version_id
     for step in rp.steps:
         kind = step[0]
         if kind == 'create_policy':
@@ -260,13 +278,8 @@ def apply_row(api: Api, rp: RowPlan) -> None:
             api.update('brightrule_policy', step[1], step[2])
             policy_id = step[1]
         elif kind == 'create_version':
-            if policy_id is None:
-                policy_id = api.find('brightrule_policy', {'policy_no': rp.policy_no}, 'id')[0]['id']
             version_id = api.create('brightrule_policy_version', {**step[1], 'policy': policy_id})['id']
         elif kind in ('create_doc', 'update_doc'):
-            if version_id is None:
-                pid = policy_id or api.find('brightrule_policy', {'policy_no': rp.policy_no}, 'id')[0]['id']
-                version_id = api.find('brightrule_policy_version', {'policy': pid, 'version_no': rp.version_no}, 'id')[0]['id']
             fields = dict(step[1] if kind == 'create_doc' else step[2])
             original = step[2] if kind == 'create_doc' else step[3]
             if original is not None:

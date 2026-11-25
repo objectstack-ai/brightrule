@@ -276,6 +276,18 @@ class RedactToolTest(unittest.TestCase):
         self.assertIn('| 座机 | 【固定电话】 |', md)
         self.assertIn('文本框：人员A签发', md)
 
+    def test_markdown_stats(self):
+        import mdstats
+        csv_path = self.run_root / 'Markdown统计.csv'
+        self.assertTrue(csv_path.exists())
+        self.assertTrue((self.run_root / 'Markdown统计.md').exists())
+        policies = mdstats.collect(self.run_root / '脱敏文件')
+        self.assertEqual(len(policies), 1)
+        self.assertGreater(policies[0].tokens, 0)
+        self.assertEqual(mdstats.estimate_tokens('一二三四'), 7)        # 4 × 1.5 × 1.1 = 6.6 → 7
+        self.assertEqual(mdstats.estimate_tokens('abcdefgh'), 3)        # 8 / 4 × 1.1 = 2.2 → 3
+        self.assertEqual(mdstats.main(['--input', str(self.run_root)]), 0)
+
     def test_word_can_still_read_it(self):
         if not shutil.which('pandoc'):
             self.skipTest('pandoc 未安装')

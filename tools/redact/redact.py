@@ -35,6 +35,7 @@ from lxml import etree
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from convert import CONVERTIBLE, has_docx_sibling  # noqa: E402
 from docx2md import attachment_docx, document_markdown, split_document  # noqa: E402
+import mdstats  # noqa: E402
 
 # ── Word XML 命名空间 ──────────────────────────────────────────────────────
 W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
@@ -755,6 +756,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if not args.no_md:
         print(f'原件 Markdown：{internal / "原件md"}')
     print(f'报告：{internal / "报告.md"}')
+    if not args.no_md and docs_dir.is_dir():
+        policies = mdstats.collect(docs_dir)
+        if policies:
+            mdstats.write_outputs(out_root, policies)
+            for line in mdstats.summary_lines(policies):
+                print(line)
+            print(f'Markdown 统计：{out_root / "Markdown统计.md"}')
     if skipped:
         by_ext = Counter(p.suffix.lower() or '（无扩展名）' for p in skipped)
         print('\n跳过的文件（' + '，'.join(f'{e} {n} 个' for e, n in by_ext.most_common()) + '）：')

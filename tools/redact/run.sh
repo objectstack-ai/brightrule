@@ -3,6 +3,7 @@
 # 1. ./run.sh convert --input 原件目录             .doc 等就地转成同名 .docx（只有 .docx 时可跳过）
 # 2. ./run.sh scan --input 原件目录 [--dict 已有词典.csv]   扫描出候选词典
 # 3. ./run.sh --input 原件目录 --dict 词典.csv              脱敏
+# 4. ./run.sh stats --input 脱敏结果/<时间>                  统计 Markdown 字数、大小、token（脱敏时也会自动统计）
 set -euo pipefail
 cd "$(dirname "$0")"
 if [ ! -x .venv/bin/python ]; then
@@ -17,5 +18,6 @@ fi
 case "${1:-}" in
   convert) shift; exec .venv/bin/python convert.py "$@" ;;
   scan) shift; exec .venv/bin/python scan.py "$@" ;;
+  stats) shift; exec .venv/bin/python mdstats.py "$@" ;;
 esac
 exec .venv/bin/python redact.py "$@"

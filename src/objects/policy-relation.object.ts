@@ -20,7 +20,7 @@ import { ObjectSchema, Field } from '@objectstack/spec/data';
  *
  * `from_policy` and `to_title` are filled by the hook and are therefore not
  * `readonly`: the platform strips a readonly field from every non-system
- * write, and the hook's writes are not system writes (as for 版本文档).
+ * write, and the hook's writes are not system writes (as for 附件).
  */
 export const PolicyRelation = ObjectSchema.create({
   name: 'brightrule_policy_relation',

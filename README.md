@@ -21,7 +21,7 @@
 
 - **对话问询（主入口，ObjectOS）**：员工在 ObjectOS 的 AI 对话面板里直接提问。
   `src/skills/policy-inquiry.skill.ts` 是「制度问询」技能：只依据提问人有权查看的现行版本脱敏正文
-  （版本文档 `body_md_redacted`）作答、注明《制度》版本 第 N 条；点名或选中制度时只读这一份；
+  （制度的 `current_version` → 版本的 `body_md`，规范性附件一并读）作答、注明《制度》版本 第 N 条；点名或选中制度时只读这一份；
   找不到依据时回答「未找到相关规定」（一期不转人工，brightrule#18）。
   ⚠️ 截至 ObjectOS 18.6.0，平台的 `ask` 智能体还不加载应用技能（[objectstack-ai/cloud#4935](https://github.com/objectstack-ai/cloud/issues/4935)），
   对话的回答来自 `ask` 自带的数据查询能力，技能里的规则尚未生效。

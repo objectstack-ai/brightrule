@@ -1,9 +1,10 @@
 import { ObjectSchema, Field } from '@objectstack/spec/data';
 
 /**
- * 制度主表 — one row per policy. Its text lives on its versions' documents
- * (`brightrule_policy_document.body_md_redacted`); the descriptions below are
- * what an AI client reads through `describe_object`, so they say where.
+ * 制度主表 — one row per policy. Its text is the body of its current version
+ * (`current_version` → `brightrule_policy_version.body_md`); the descriptions
+ * below are what an AI client reads through `describe_object`, so they say
+ * where.
  *
  * Named `brightrule_policy`, never bare `policy`: on this platform *policy*
  * means a permission / security policy (AGENTS.md).
@@ -19,7 +20,7 @@ export const Policy = ObjectSchema.create({
   icon: 'book-open',
   nameField: 'title',
   description:
-    '制度目录（每份制度一行，不含正文）。正文全文在版本文档 brightrule_policy_document：条件 policy = 本制度 id、is_current = true，读字段 body_md_redacted。员工可问的只有 status = published 的制度',
+    '制度目录（每份制度一行，不含正文）。正文在现行版本上：current_version 指向现行的 brightrule_policy_version 记录，读它的 body_md。员工可问的只有 status = published 的制度',
 
   fieldGroups: [
     { key: 'basic', label: '基本信息' },
@@ -69,11 +70,11 @@ export const Policy = ObjectSchema.create({
         { label: '已废止', value: 'abolished', color: '#EF4444' },
       ],
     }),
-    current_version: Field.text({
+    current_version: Field.lookup('brightrule_policy_version', {
       label: '现行版本',
-      maxLength: 20,
       group: 'effect',
-      description: '现行版本的版本号（文号），引用出处时写在制度名之后，如《某制度》本司集办﹝2022﹞17号 第五条',
+      description:
+        '指向现行版本记录（由版本设为现行时自动填写）；get_record 读这条版本即得正文 body_md，版本号 version_no 写在引用出处的制度名之后',
     }),
     effective_date: Field.date({ label: '生效日期', group: 'effect' }),
     next_review_date: Field.date({ label: '下次复审日', group: 'effect' }),

@@ -25,12 +25,13 @@ const policyVersionViews: UI.View = {
         { field: 'policy' },
         { field: 'version_no' },
         { field: 'effective_date' },
+        { field: 'text_chars' },
         { field: 'change_note' },
       ],
       filter: [{ field: 'version_status', operator: 'equals', value: 'draft' }],
       sort: [{ field: 'created_at', order: 'desc' }],
       // 勾选多条后「设为现行」：逐条改版本状态，版本联动钩子（src/qa/version-current.hook.ts）
-      // 随之把文档设为现行、替换同一制度原来的现行版本、草稿制度改为已发布。
+      // 随之把附件设为现行、替换同一制度原来的现行版本、草稿制度改为已发布。
       bulkActionDefs: [
         {
           name: 'brightrule_version_set_current',

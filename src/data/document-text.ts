@@ -1,20 +1,21 @@
 /**
- * The derived numbers of a version document (版本文档) — character count,
- * token estimate, article index — computed one way, here, so the seed and the
- * import script (tools/redact → import, brightrule#11 / #13) agree.
+ * The derived numbers of a version body (版本正文) or attachment (附件) —
+ * character count, token estimate, article index — computed one way, here, so
+ * the seed and the import script (tools/redact → import, brightrule#11 / #13)
+ * agree.
  *
  * The import script is Python; it mirrors these definitions rather than
  * importing them. Keep the two in step:
  *
  * - **Characters** are Unicode code points (`Array.from(s).length` here,
- *   `len(s)` in Python), counted over `body_md_redacted` exactly as stored,
+ *   `len(s)` in Python), counted over `body_md` exactly as stored,
  *   Markdown syntax and line breaks included.
  * - **Tokens** are an ESTIMATE, not a tokenizer's count: characters divided by
  *   {@link CHARS_PER_TOKEN}, rounded up. Mostly-Chinese policy text runs at
  *   roughly 1.5 characters per token on current model tokenizers; the number
  *   is for sizing (will a body fit a prompt?), never for billing.
  * - **Article offsets** are `[start, end)` in code points into
- *   `body_md_redacted`: `start` at the article's `**第X条**` marker, `end` where
+ *   `body_md`: `start` at the article's `**第X条**` marker, `end` where
  *   the next article (or the text) begins, trailing blank lines excluded.
  */
 
@@ -66,7 +67,7 @@ export function assembleBody(heading: string, articles: BodyArticle[]): {
   return { markdown: markdown.replace(/\n+$/, '\n'), articleIndex };
 }
 
-/** The derived numbers stored beside a document's text (all zero, has_text false, for none). */
+/** The derived numbers stored beside a body's or attachment's text (all zero, has_text false, for none). */
 export function textStats(text: string | undefined): { has_text: boolean; text_chars: number; text_tokens: number } {
   if (!text) return { has_text: false, text_chars: 0, text_tokens: 0 };
   return { has_text: true, text_chars: countChars(text), text_tokens: estimateTokens(text) };

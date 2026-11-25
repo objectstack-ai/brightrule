@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""删除制度：连同它的版本、版本文档、条款、制度关系一起删掉。在本机运行，经系统的 HTTPS 接口删除。
+"""删除制度：连同它的版本（含正文）、附件、条款、制度关系一起删掉。在本机运行，经系统的 HTTPS 接口删除。
 
-系统不允许直接删还有版本、条款的制度（页面上删会提示失败），这个命令按「条款 → 版本（文档、关系随版本删除）
+系统不允许直接删还有版本、条款的制度（页面上删会提示失败），这个命令按「条款 → 版本（附件、关系随版本删除）
 → 制度」的顺序删。
 
 用法：
@@ -34,18 +34,18 @@ def targets(api: Api, policy_nos: List[str], titles: List[str]) -> List[Dict]:
 
 
 def plan(api: Api, policy: Dict) -> List[tuple]:
-    """删除顺序：条款（挂在制度上，限制删除）→ 版本（文档、以它为来源的关系随之删除）→ 制度。"""
+    """删除顺序：条款（挂在制度上，限制删除）→ 版本（附件、以它为来源的关系随之删除）→ 制度。"""
     clauses = api.find('brightrule_clause', {'policy': policy['id']}, 'id')
     versions = api.find('brightrule_policy_version', {'policy': policy['id']}, 'id,version_no,version_status')
-    docs = sum(len(api.find('brightrule_policy_document', {'policy_version': v['id']}, 'id')) for v in versions)
-    print(f'  {policy.get("title")}（{policy.get("policy_no") or "无编号"}）：版本 {len(versions)} 个、文档 {docs} 个、条款 {len(clauses)} 条')
+    atts = sum(len(api.find('brightrule_policy_attachment', {'policy_version': v['id']}, 'id')) for v in versions)
+    print(f'  {policy.get("title")}（{policy.get("policy_no") or "无编号"}）：版本 {len(versions)} 个、附件 {atts} 个、条款 {len(clauses)} 条')
     return ([('brightrule_clause', c['id']) for c in clauses]
             + [('brightrule_policy_version', v['id']) for v in versions]
             + [('brightrule_policy', policy['id'])])
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    ap = argparse.ArgumentParser(description='删除制度及其版本、文档、条款')
+    ap = argparse.ArgumentParser(description='删除制度及其版本、附件、条款')
     ap.add_argument('--url', required=True, help='系统地址')
     ap.add_argument('--samples', action='store_true', help='删除开发环境自带的 5 份示例制度')
     ap.add_argument('--policy-no', action='append', default=[], help='要删的制度编号，可写多次')

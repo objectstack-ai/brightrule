@@ -3,6 +3,37 @@ import { PolicyVersion } from '../objects/policy-version.object.js';
 
 const policyVersionViews: UI.View = {
   object: PolicyVersion.name,
+  // 新建 / 编辑表单只放人填的字段，两两成对排齐，正文紧接在后面。条号索引、字数、token 估算、内容哈希由
+  // 导入工具（tools/redact）维护，不在表单里。正文原件现阶段不上传，字段留给后期，单独一组、默认折叠。
+  // 对象字段的 description 写给 AI，表单里用 helpText 覆盖成给人看的短句（不需要提示的字段给空串）。
+  form: {
+    type: 'simple',
+    modalSize: 'xl',
+    sections: [
+      {
+        name: 'version_main',
+        label: '版本信息',
+        columns: 2,
+        fields: [
+          'policy',
+          { field: 'version_no', helpText: '' },
+          { field: 'title', span: 'full', helpText: '' },
+          { field: 'effective_date', helpText: '' },
+          { field: 'version_status', helpText: '' },
+          { field: 'change_note', span: 'full', helpText: '' },
+          { field: 'body_md', span: 'full', helpText: '脱敏后的正文（Markdown）：条文以 **第X条** 开头，章节用 ## 标题' },
+        ],
+      },
+      {
+        name: 'version_original',
+        label: '原件（后期使用）',
+        columns: 1,
+        collapsible: true,
+        collapsed: true,
+        fields: [{ field: 'original_file', helpText: '' }],
+      },
+    ],
+  },
   list: {
     label: '全部版本',
     type: 'grid',

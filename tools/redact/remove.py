@@ -36,12 +36,14 @@ def targets(api: Api, policy_nos: List[str], titles: List[str]) -> List[Dict]:
     return list(found.values())
 
 
-def package_targets(api: Api, package: Path) -> List[Dict]:
+def package_targets(api: Api, package: Path, apply: bool) -> List[Dict]:
     """导入包批次清单里「导入 = 是」的每一行对应的系统制度（和 import 的对应规则相同：有编号按编号，没有按名称）。"""
     found: Dict[str, Dict] = {}
-    for row in read_sheet(package):
-        if row.get('导入', '是') != '是':
-            continue
+    sheet = [r for r in read_sheet(package) if r.get('导入', '是') == '是']
+    print(f'先在系统里查找批次清单的 {len(sheet)} 份制度：')
+    looking = Progress(len(sheet))
+    for row in sheet:
+        print(f'{looking.next()} 查找 {row.get("包内目录", "")}')
         rows, key = find_policies(api, row.get('制度编号', ''), row.get('制度名称', ''))
         if not rows:
             print(f'  · 系统里没有 {row.get("包内目录")}，跳过')
@@ -49,6 +51,7 @@ def package_targets(api: Api, package: Path) -> List[Dict]:
             print(f'  ✗ 系统里有 {len(rows)} 份制度{key}，分不清是哪份，跳过：{row.get("包内目录")}')
         else:
             found[rows[0]['id']] = rows[0]
+    print(f'找到 {len(found)} 份，开始{"删除" if apply else "列出"}：')
     return list(found.values())
 
 
@@ -83,7 +86,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         policies = targets(api, nos, args.title)
         if package:
             seen = {p['id'] for p in policies}
-            policies += [p for p in package_targets(api, package) if p['id'] not in seen]
+            policies += [p for p in package_targets(api, package, args.apply) if p['id'] not in seen]
         failed = 0
         progress = Progress(len(policies))
         for p in policies:

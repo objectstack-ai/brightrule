@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import csv
+import os
 import hashlib
 import shutil
 import subprocess
@@ -741,6 +742,39 @@ class PackageTest(unittest.TestCase):
         rp = importer.plan_row(api, pkg2, row2, [])
         self.assertIsNone(rp.rejected)
         self.assertIn('新建版本', ' '.join(rp.actions))
+
+    def test_package_accepts_the_docs_folder_and_import_points_to_package(self):
+        import importer, package
+        out = self.tmp / '结果'
+        redact.main(['--input', str(self.src), '--dict', str(self.dict), '--output', str(out)])
+        run = sorted(out.iterdir())[-1]
+        package.main(['--run', str(run / '脱敏文件'), '--output', str(self.tmp / '导入包')])
+        self.assertTrue(any((self.tmp / '导入包').rglob('批次清单.csv')))
+        os.environ['BRIGHTRULE_TOKEN'] = 'test'
+        with self.assertRaises(SystemExit) as e:
+            importer.main(['--package', str(run / '脱敏文件'), '--url', 'http://test'])
+        self.assertIn('先运行 ./run.sh package', str(e.exception))
+
+    def test_metadata_fallbacks_for_files_without_an_info_table(self):
+        import package
+        md = ('# 发文通知\n\n关于印发《示例档案管理办法》的通知\n\n各部门：现印发。\n\n示例办公室\n\n2023年5月6日\n\n'
+              '# 正文\n\n**第一条** 为规范档案管理。\n\n**第二条** 本办法自印发之日起施行。\n')
+        meta, missing = package.metadata(md, '示办〔2023〕24号 关于印发《示例档案管理办法》的通知')
+        self.assertEqual(meta['title'], '示例档案管理办法')
+        self.assertEqual(meta['version_no'], '示办〔2023〕24号')
+        self.assertEqual(meta['effective_date'], '2023-05-06')
+        self.assertEqual(missing, ['制度编号'])
+        self.assertIn('文件名', meta['_from'])
+
+    def test_category_mapping(self):
+        import importer
+        opts = [('governance', '公司治理类'), ('operations', '经营管理类'), ('hr', '人力资源管理类'),
+                ('compliance', '审计合规类'), ('safety', '安全环保监管类'), ('party', '党工纪类'), ('tech', '科技与工程管理类')]
+        for text, value in (('人力资源管理类', 'hr'), ('经营类', 'operations'), ('安全环保监管类', 'safety'),
+                            ('党工纪类', 'party'), ('合规管理类', 'compliance'), ('科技与工程管理类', 'tech'), ('hr', 'hr')):
+            self.assertEqual(importer.map_category(text, opts), value, text)
+        self.assertIsNone(importer.map_category('不存在的分类', opts))
+        self.assertIsNone(importer.map_category('', opts))
 
     def test_import_refuses_internal_folder(self):
         import importer

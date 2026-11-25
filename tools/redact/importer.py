@@ -130,11 +130,25 @@ def read_sheet(package: Path) -> List[Dict[str, str]]:
         return [{k.strip(): (v or '').strip() for k, v in row.items()} for row in csv.DictReader(f)]
 
 
+def _category_core(text: str) -> str:
+    """「经营管理类」「经营类」→「经营」：去掉末尾的「类」「管理类」「监管类」和空白后再比。"""
+    return re.sub(r'(?:管理|监管)?类$', '', re.sub(r'\s', '', text or ''))
+
+
 def map_category(text: str, options: List[Tuple[str, str]]) -> Optional[str]:
+    """批次清单里的类别文字 → 系统选项值：先比完全相同，再比去掉「（管理）类」后的核心词，最后比包含关系（取最长的）。"""
+    if not text:
+        return None
     for value, label in options:
-        if text and (text == label or label in text or text == value):
+        if text in (label, value):
             return value
-    return None
+    core = _category_core(text)
+    for value, label in options:
+        if core and core == _category_core(label):
+            return value
+    hits = [(len(_category_core(label)), value) for value, label in options
+            if _category_core(label) and (_category_core(label) in core or core in _category_core(label))]
+    return max(hits)[1] if hits else None
 
 
 def plan_row(api: Api, package: Path, row: Dict[str, str], options: List[Tuple[str, str]]) -> RowPlan:
@@ -273,6 +287,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if '内部留存' in str(package):
         raise SystemExit('拒绝：导入只读导入包，不读「内部留存-勿外发」。')
     if not (package / '批次清单.csv').exists():
+        if package.name == '脱敏文件' or (package / '脱敏文件').is_dir():
+            raise SystemExit(f'这是脱敏结果，不是导入包：先运行 ./run.sh package --run <脱敏结果/时间>，'
+                             f'再把它生成的「导入包/<时间>」目录交给 --package。（{args.package}）')
         raise SystemExit(f'不是导入包（没有 批次清单.csv）：{args.package}')
     api = Api(args.url)
     options = api.category_options()

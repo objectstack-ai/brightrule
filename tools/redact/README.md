@@ -171,6 +171,7 @@ cd tools/redact
 **删除**（`remove`）：删掉制度及其版本、版本文档、条款、关系。系统不允许在页面上直接删还有版本、条款的制度，用这个命令按顺序删：
 
 ```bash
+./run.sh remove --url https://<系统地址> --package 导入包/<时间>            # 预演：这个导入包导入的全部制度
 ./run.sh remove --url https://<系统地址> --login --samples                  # 预演：开发环境自带的 5 份示例制度
 ./run.sh remove --url https://<系统地址> --login --policy-no 编号 --title 名称   # 预演：指定的制度（可写多次）
 ```

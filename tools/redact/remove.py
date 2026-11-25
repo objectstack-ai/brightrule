@@ -5,6 +5,7 @@
 → 制度」的顺序删。
 
 用法：
+    python3 remove.py --url https://<系统地址> --package 导入包/<时间>              # 预演：删除这个导入包导入的全部制度
     python3 remove.py --url https://<系统地址> --login --samples                    # 预演：删除系统自带的 5 份示例制度
     python3 remove.py --url https://<系统地址> --login --policy-no HM-XX-01 --title 某某办法   # 预演：按编号或名称指定
     … 末尾加 --apply 才真正删除。删除不可恢复；导入包还在的话，重跑 import 可以再导入。
@@ -15,7 +16,9 @@ import argparse
 import sys
 from typing import Dict, List, Optional, Sequence
 
-from importer import Api, ApiError, AuthError, Progress
+from pathlib import Path
+
+from importer import Api, ApiError, AuthError, Progress, find_policies, open_package, read_sheet
 
 # 开发环境自带的示例制度（虚构，src/data/seed.ts），按制度编号删
 SAMPLE_POLICY_NOS = ['FIN-001', 'HR-002', 'IT-003', 'CMP-004', 'CMP-005']
@@ -33,6 +36,22 @@ def targets(api: Api, policy_nos: List[str], titles: List[str]) -> List[Dict]:
     return list(found.values())
 
 
+def package_targets(api: Api, package: Path) -> List[Dict]:
+    """导入包批次清单里「导入 = 是」的每一行对应的系统制度（和 import 的对应规则相同：有编号按编号，没有按名称）。"""
+    found: Dict[str, Dict] = {}
+    for row in read_sheet(package):
+        if row.get('导入', '是') != '是':
+            continue
+        rows, key = find_policies(api, row.get('制度编号', ''), row.get('制度名称', ''))
+        if not rows:
+            print(f'  · 系统里没有 {row.get("包内目录")}，跳过')
+        elif len(rows) > 1:
+            print(f'  ✗ 系统里有 {len(rows)} 份制度{key}，分不清是哪份，跳过：{row.get("包内目录")}')
+        else:
+            found[rows[0]['id']] = rows[0]
+    return list(found.values())
+
+
 def plan(api: Api, policy: Dict) -> List[tuple]:
     """删除顺序：条款（挂在制度上，限制删除）→ 版本（文档、以它为来源的关系随之删除）→ 制度。"""
     clauses = api.find('brightrule_clause', {'policy': policy['id']}, 'id')
@@ -47,6 +66,7 @@ def plan(api: Api, policy: Dict) -> List[tuple]:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     ap = argparse.ArgumentParser(description='删除制度及其版本、文档、条款')
     ap.add_argument('--url', required=True, help='系统地址')
+    ap.add_argument('--package', type=Path, help='删除这个导入包（导入包/<时间>）导入的全部制度')
     ap.add_argument('--samples', action='store_true', help='删除开发环境自带的 5 份示例制度')
     ap.add_argument('--policy-no', action='append', default=[], help='要删的制度编号，可写多次')
     ap.add_argument('--title', action='append', default=[], help='要删的制度名称（完全一致），可写多次')
@@ -54,12 +74,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument('--login', action='store_true', help='运行时输入账号密码登录')
     args = ap.parse_args(argv)
     nos = args.policy_no + (SAMPLE_POLICY_NOS if args.samples else [])
-    if not nos and not args.title:
-        raise SystemExit('请用 --samples、--policy-no 或 --title 指定要删的制度。')
+    if not nos and not args.title and not args.package:
+        raise SystemExit('请用 --package、--samples、--policy-no 或 --title 指定要删的制度。')
+    package = open_package(args.package) if args.package else None
     api = Api(args.url, login=args.login)
     print(('删除' if args.apply else '预演（不删除）') + f' → {args.url}')
     try:
         policies = targets(api, nos, args.title)
+        if package:
+            seen = {p['id'] for p in policies}
+            policies += [p for p in package_targets(api, package) if p['id'] not in seen]
         failed = 0
         progress = Progress(len(policies))
         for p in policies:

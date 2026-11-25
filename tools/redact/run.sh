@@ -7,7 +7,7 @@
 # 5. ./run.sh package --run 脱敏结果/<时间> --originals 原件目录   打包成导入包，人工核对批次清单
 # 6. ./run.sh import --package 导入包/<时间> --url https://系统地址 --login [--apply]   导入（先预演，加 --apply 才写入）
 # 7. ./run.sh publish --package 导入包/<时间> --url https://系统地址 --login [--apply]  把导入的草稿版本批量设为现行
-# 8. ./run.sh remove --url https://系统地址 --login (--samples | --policy-no 编号 | --title 名称) [--apply]  删除制度及其版本、文档、条款
+# 8. ./run.sh remove --url https://系统地址 --login (--package 导入包/<时间> | --samples | --policy-no 编号 | --title 名称) [--apply]  删除制度及其版本、文档、条款
 set -euo pipefail
 cd "$(dirname "$0")"
 if [ ! -x .venv/bin/python ]; then

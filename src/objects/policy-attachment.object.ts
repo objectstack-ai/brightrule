@@ -40,8 +40,8 @@ export const PolicyAttachment = ObjectSchema.create({
   fieldGroups: [
     { key: 'basic', label: '附件信息' },
     { key: 'content', label: '附件正文' },
-    // 自动带出 / 导入工具维护的字段和原件：收在最后，默认折叠
-    { key: 'import', label: '原件与导入信息', collapse: 'collapsed' },
+    // 原件单独一组、默认折叠；自动带出（所属制度、现行）和导入工具维护的字段 hidden，不进表单
+    { key: 'import', label: '原件', collapse: 'collapsed' },
   ],
 
   fields: {
@@ -58,7 +58,7 @@ export const PolicyAttachment = ObjectSchema.create({
       group: 'basic',
       deleteBehavior: 'cascade',
     }),
-    policy: Field.lookup('brightrule_policy', {
+    policy: Field.lookup('brightrule_policy', { hidden: true,
       label: '所属制度',
       group: 'import',
       description: '由所属版本自动带出',
@@ -81,7 +81,7 @@ export const PolicyAttachment = ObjectSchema.create({
       description: '原文里的编号，如「附件1」「附表2」',
     }),
     sort_no: Field.number({ label: '序号', scale: 0, min: 1, group: 'basic', }),
-    is_current: Field.boolean({
+    is_current: Field.boolean({ hidden: true,
       label: '现行',
       defaultValue: false,
       group: 'import',
@@ -96,10 +96,10 @@ export const PolicyAttachment = ObjectSchema.create({
       description: '规范性附件的全文（Markdown，已脱敏）；表单、仅原件的附件为空',
     }),
 
-    has_text: Field.boolean({ label: '有文本', defaultValue: false, group: 'import' }),
-    text_chars: Field.number({ label: '字数', scale: 0, min: 0, group: 'import' }),
-    text_tokens: Field.number({ label: 'Token 估算', scale: 0, min: 0, group: 'import' }),
-    content_hash: Field.text({
+    has_text: Field.boolean({ hidden: true, label: '有文本', defaultValue: false, group: 'import' }),
+    text_chars: Field.number({ hidden: true, label: '字数', scale: 0, min: 0, group: 'import' }),
+    text_tokens: Field.number({ hidden: true, label: 'Token 估算', scale: 0, min: 0, group: 'import' }),
+    content_hash: Field.text({ hidden: true,
       label: '内容哈希',
       maxLength: 64,
       group: 'import',

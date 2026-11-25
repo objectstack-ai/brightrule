@@ -25,7 +25,6 @@ const policyVersionViews: UI.View = {
         { field: 'policy' },
         { field: 'version_no' },
         { field: 'effective_date' },
-        { field: 'text_chars' },
         { field: 'change_note' },
       ],
       filter: [{ field: 'version_status', operator: 'equals', value: 'draft' }],

@@ -5,8 +5,9 @@
     python3 mdstats.py --input 脱敏结果/<时间>            （或直接给 …/脱敏文件 目录）
 
 输出到该次结果目录下（文件名、内容都是脱敏后的，可随结果一起交出去）：
-    Markdown统计.csv   每个 .md 一行
-    Markdown统计.md    按制度汇总，标出超过阈值的
+    Markdown统计.csv   每份制度一行（正文 + 附件合计），按 token 从大到小排好，第一列是排名
+    Markdown统计.md    同样的排名，加上合计和阈值说明
+    Markdown明细.csv   每个 .md 一行，也按大小排
 
 token 估算用设计文档 P3.3 的统一公式：汉字每个计 1.5，其余每 4 个字符计 1，再加 10%。
 阈值（设计文档场景 B、C）：单份制度超过 1.2 万 token 不再整份交给模型，改为段落检索；
@@ -96,31 +97,43 @@ def kb(n: int) -> str:
     return f'{n / 1024:.1f} KB'
 
 
+def ranked(policies: List[Policy]) -> List[Policy]:
+    return sorted(policies, key=lambda p: (-p.tokens, p.name))
+
+
 def write_outputs(out_dir: Path, policies: List[Policy]) -> Tuple[Path, Path]:
+    """Markdown统计.csv：每份制度一行，按 token 从大到小排好；Markdown统计.md：同样的排名加合计。
+    每个 .md 的明细另存 Markdown明细.csv，也按大小排。"""
     csv_path, md_path = out_dir / 'Markdown统计.csv', out_dir / 'Markdown统计.md'
+    rows = ranked(policies)
     with csv_path.open('w', newline='', encoding='utf-8-sig') as f:
         wr = csv.writer(f)
-        wr.writerow(['制度', '文件', '类型', '字数', '字节', 'token估算'])
-        for p in policies:
-            for m in ([p.body] if p.body else []) + p.attachments:
-                wr.writerow([p.name, str(m.path), m.kind, m.chars, m.bytes, m.tokens])
+        wr.writerow(['排名', '制度', 'token估算', '合计字数', '大小KB', '正文字数', '附件数', '超过单份阈值'])
+        for i, p in enumerate(rows, start=1):
+            wr.writerow([i, p.name, p.tokens, p.chars, round(p.bytes / 1024, 1),
+                         p.body.chars if p.body else 0, len(p.attachments), '是' if p.tokens > PER_POLICY_TOKENS else ''])
+    files = sorted(((p, m) for p in policies for m in ([p.body] if p.body else []) + p.attachments),
+                   key=lambda pm: (-pm[1].tokens, str(pm[1].path)))
+    with (out_dir / 'Markdown明细.csv').open('w', newline='', encoding='utf-8-sig') as f:
+        wr = csv.writer(f)
+        wr.writerow(['排名', '文件', '类型', '所属制度', 'token估算', '字数', '大小KB'])
+        for i, (p, m) in enumerate(files, start=1):
+            wr.writerow([i, str(m.path), m.kind, p.name, m.tokens, m.chars, round(m.bytes / 1024, 1)])
     total_tokens = sum(p.tokens for p in policies)
     big = [p for p in policies if p.tokens > PER_POLICY_TOKENS]
-    lines = ['# Markdown 统计', '',
-             f'- 制度 {len(policies)} 份，Markdown 文件 {sum((1 if p.body else 0) + len(p.attachments) for p in policies)} 个'
-             f'（附件 {sum(len(p.attachments) for p in policies)} 个）',
-             f'- 合计 {sum(p.chars for p in policies):,} 字，{kb(sum(p.bytes for p in policies))}，约 {total_tokens:,} token',
-             f'- 单份最大约 {max((p.tokens for p in policies), default=0):,} token；'
-             f'中位约 {sorted(p.tokens for p in policies)[len(policies) // 2] if policies else 0:,} token',
-             f'- 超过单份阈值 {PER_POLICY_TOKENS:,} token（问这份制度时改为段落检索）：{len(big)} 份',
+    lines = ['# Markdown 统计（按大小从大到小）', '',
+             f'- 制度 {len(policies)} 份（附件 {sum(len(p.attachments) for p in policies)} 个），'
+             f'合计 {sum(p.chars for p in policies):,} 字、{kb(sum(p.bytes for p in policies))}、约 {total_tokens:,} token',
+             f'- 最大：{rows[0].name}，约 {rows[0].tokens:,} token' if rows else '- 无',
+             f'- 超过单份阈值 {PER_POLICY_TOKENS:,} token 的：{len(big)} 份（问这份制度时改为段落检索）',
              f'- 全部合计{"不超过" if total_tokens <= ALL_POLICIES_TOKENS else "超过"} {ALL_POLICIES_TOKENS:,} token'
              f'（{"通用问可以全部放入" if total_tokens <= ALL_POLICIES_TOKENS else "通用问需要先定位制度"}）', '',
-             'token 为估算（汉字每个计 1.5，其余每 4 个字符计 1，再加 10%）；正文 + 全部附件计入，表单附件实际不一定交给模型。', '',
-             '| 制度 | 正文字数 | 附件 | 合计字数 | 大小 | token 估算 | |', '|---|---:|---:|---:|---:|---:|---|']
-    for p in sorted(policies, key=lambda p: -p.tokens):
-        flag = '超过单份阈值' if p.tokens > PER_POLICY_TOKENS else ''
-        lines.append(f'| {p.name} | {p.body.chars if p.body else 0:,} | {len(p.attachments)} | {p.chars:,} | {kb(p.bytes)} '
-                     f'| {p.tokens:,} | {flag} |')
+             '| 排名 | 制度 | token 估算 | 合计字数 | 大小 | 附件 | |', '|---:|---|---:|---:|---:|---:|---|']
+    for i, p in enumerate(rows, start=1):
+        flag = '⚠ 超过单份阈值' if p.tokens > PER_POLICY_TOKENS else ''
+        lines.append(f'| {i} | {p.name} | {p.tokens:,} | {p.chars:,} | {kb(p.bytes)} | {len(p.attachments)} | {flag} |')
+    lines += ['', 'token 为估算（汉字每个计 1.5，其余每 4 个字符计 1，再加 10%），正文和全部附件都计入。'
+              '每个 .md 文件的明细见 `Markdown明细.csv`。']
     md_path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
     return csv_path, md_path
 
@@ -147,11 +160,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     csv_path, md_path = write_outputs(out_dir, policies)
     for line in summary_lines(policies):
         print(line)
-    print('最大的 5 份：')
-    for p in sorted(policies, key=lambda p: -p.tokens)[:5]:
-        print(f'  {p.tokens:>8,} token  {p.chars:>8,} 字  {kb(p.bytes):>9}  {p.name}' + (f'（含附件 {len(p.attachments)} 个）' if p.attachments else ''))
-    print(f'明细：{csv_path}')
-    print(f'汇总：{md_path}')
+    rows = ranked(policies)
+    print(f'按大小排名（前 {min(10, len(rows))} 份，共 {len(rows)} 份）：')
+    print(f'  {"排名":>4}  {"token":>8}  {"字数":>8}  {"大小":>9}  制度')
+    for i, p in enumerate(rows[:10], start=1):
+        flag = '  ⚠ 超过单份阈值' if p.tokens > PER_POLICY_TOKENS else ''
+        print(f'  {i:>4}  {p.tokens:>8,}  {p.chars:>8,}  {kb(p.bytes):>9}  {p.name}{flag}')
+    print(f'完整排名：{csv_path}（Excel 打开即是排好的；每个 .md 的明细在 Markdown明细.csv）')
     return 0
 
 

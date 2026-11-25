@@ -731,6 +731,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     help='同时处理的文件数，默认等于 CPU 核数；设为 1 则逐个处理')
     ap.add_argument('--no-md', action='store_true', help='不生成 Markdown（默认生成原件与脱敏后各一份 .md）')
     ap.add_argument('--no-split', action='store_true', help='不拆分附件（默认每个附件另存一个 .docx 和 .md）')
+    ap.add_argument('--ocr-pdf', action='store_true',
+                    help='识别扫描版 PDF 并脱敏（只在 Mac 上，较慢）；默认不处理 PDF，只列进 PDF清单.csv')
     args = ap.parse_args(argv)
 
     if not args.input.is_dir():
@@ -747,11 +749,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     sources = sorted(p for p in args.input.rglob('*') if p.is_file() and not p.name.startswith(('~$', '.')))
     # 旁边已有同名 .docx 的 .doc（就地转换的结果）只处理 .docx，不算跳过
-    ocr_unavailable = pdf_ocr.unavailable_reason()
-    # 扫描版 PDF：旁边有同名 .docx 的用 .docx；能识别（Mac）时走 OCR，否则跳过并说明原因
-    pdfs = [p for p in sources if p.suffix.lower() == '.pdf' and not p.with_suffix('.docx').exists()]
-    skipped = [p for p in sources if p.suffix.lower() != '.docx' and not has_docx_sibling(p)
-               and not (p.suffix.lower() == '.pdf' and (p.with_suffix('.docx').exists() or not ocr_unavailable))]
+    # PDF：默认不处理，单独列进 PDF清单.csv；加 --ocr-pdf 才识别（只在 Mac 上）。旁边有同名 .docx 的用 .docx。
+    all_pdfs = [p for p in sources if p.suffix.lower() == '.pdf']
+    pdfs = [p for p in all_pdfs if not p.with_suffix('.docx').exists()]
+    ocr_unavailable = pdf_ocr.unavailable_reason() if args.ocr_pdf and pdfs else None
+    run_ocr = bool(args.ocr_pdf and pdfs and not ocr_unavailable)
+    skipped = [p for p in sources if p.suffix.lower() not in ('.docx', '.pdf') and not has_docx_sibling(p)]
+    if ocr_unavailable:
+        skipped += pdfs
     jobs = []
     for src in sources:
         if src.suffix.lower() != '.docx':
@@ -762,7 +767,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         orig_md = None if args.no_md else internal / '原件md' / rel.with_suffix('.md')
         jobs.append((src, docs_dir / new_parent / (new_stem + '.docx'), orig_md))
     pdf_jobs = []
-    if not ocr_unavailable:
+    if run_ocr:
         for src in pdfs:
             rel = src.relative_to(args.input)
             new_stem, _ = red.redact_string(rel.stem)
@@ -804,6 +809,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     write_summary(internal / '替换汇总.csv', summary)
     write_report(internal / '报告.md', results, skipped, args, out_root, now, len(terms), len(patterns), summary)
     nt_files = write_non_text(out_root, results, docs_dir)
+    pending_pdfs = [] if (run_ocr or ocr_unavailable) else pdfs
+    write_pdf_list(internal / 'PDF清单.csv', all_pdfs, args.input, pending_pdfs)
+    if pending_pdfs:
+        with (internal / '报告.md').open('a', encoding='utf-8') as f:
+            f.write(f'\n## PDF（未处理，{len(pending_pdfs)} 个）\n\n默认不处理 PDF，页数、大小见 `PDF清单.csv`；'
+                    '要识别扫描版 PDF 时加 `--ocr-pdf`（只在 Mac 上，较慢）。\n\n')
+            f.writelines(f'- {q.relative_to(args.input)}\n' for q in pending_pdfs)
 
     failed = [r for r in results if r.error or r.leaks]
     n_att = sum(len(r.attachments) for r in results)
@@ -819,6 +831,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if nt_files:
         total_nt = sum(sum(c.values()) for r in results for c in r.non_text.values())
         print(f'{nt_files} 份含图片等非文字内容（共 {total_nt} 处，转 Markdown 时没有转成文字），见 {out_root / "非文字内容统计.csv"}')
+    if pending_pdfs:
+        print(f'{len(pending_pdfs)} 个 PDF 未处理（默认不处理 PDF），清单见 {internal / "PDF清单.csv"}；'
+              '要识别扫描版 PDF 时加 --ocr-pdf（只在 Mac 上）。')
     if n_ocr:
         print(f'{n_ocr} 个扫描版 PDF 只输出脱敏后的 .md；文字由 OCR 识别，可能有错字，导入前请人工核对（报告里已标出）。')
     if n_att:
@@ -902,6 +917,34 @@ def write_manifest(path: Path, results: List[FileResult], input_dir: Path, docs_
         'ocr': r.ocr,
     } for r in results]
     path.write_text(json.dumps({'files': rows}, ensure_ascii=False, indent=1), encoding='utf-8')
+
+
+def pdf_pages(path: Path) -> str:
+    """PDF 的页数（数页对象，粗略；读不出时空着）。"""
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return ''
+    m = re.findall(rb'/Type\s*/Pages\b[^>]*?/Count\s+(\d+)', data)
+    if m:
+        return str(max(int(x) for x in m))
+    n = len(re.findall(rb'/Type\s*/Page\b(?!s)', data))
+    return str(n) if n else ''
+
+
+def write_pdf_list(path: Path, all_pdfs: List[Path], input_dir: Path, pending: List[Path]) -> None:
+    """原件里的全部 PDF：页数、大小、旁边有没有同名 .docx、这次处理了没有。路径是原文，所以放在内部留存。"""
+    if not all_pdfs:
+        return
+    pending_set = set(pending)
+    with path.open('w', newline='', encoding='utf-8-sig') as f:
+        wr = csv.writer(f)
+        wr.writerow(['原件路径', '页数', '大小KB', '旁边有同名 .docx', '这次'])
+        for p in all_pdfs:
+            has_docx = p.with_suffix('.docx').exists()
+            state = '用了同名 .docx' if has_docx else ('未处理' if p in pending_set else '已识别 / 见报告')
+            wr.writerow([p.relative_to(input_dir).as_posix(), pdf_pages(p), round(p.stat().st_size / 1024, 1),
+                         '是' if has_docx else '', state])
 
 
 def write_non_text(out_root: Path, results: List[FileResult], docs_dir: Path) -> int:

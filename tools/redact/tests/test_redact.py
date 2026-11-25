@@ -672,7 +672,8 @@ class PackageTest(unittest.TestCase):
     def redact_and_pack(self, *extra):
         import package
         out = self.tmp / '结果'
-        redact.main(['--input', str(self.src), '--dict', str(self.dict), '--output', str(out)])
+        redact.main(['--input', str(self.src), '--dict', str(self.dict), '--output', str(out),
+                     *getattr(self, 'redact_extra', [])])
         self.run_dir = sorted(out.iterdir())[-1]
         self.assertTrue((self.run_dir / '内部留存-勿外发' / '文件清单.json').exists())
         package.main(['--run', str(self.run_dir), '--output', str(self.tmp / '导入包'), *extra])
@@ -992,6 +993,7 @@ class PackageTest(unittest.TestCase):
         saved = (pdf_ocr.unavailable_reason, pdf_ocr.ocr_pdf)
         pdf_ocr.unavailable_reason, pdf_ocr.ocr_pdf = (lambda: None), (lambda path: pages)
         self.addCleanup(lambda: (setattr(pdf_ocr, 'unavailable_reason', saved[0]), setattr(pdf_ocr, 'ocr_pdf', saved[1])))
+        self.redact_extra = ['--ocr-pdf']
         pkg = self.redact_and_pack()
         docs = self.run_dir / '脱敏文件' / '扫描'
         mds = list(docs.glob('*.md'))
@@ -1016,9 +1018,30 @@ class PackageTest(unittest.TestCase):
         saved = pdf_ocr.unavailable_reason
         pdf_ocr.unavailable_reason = lambda: '扫描版 PDF 需要在 Mac 上运行'
         self.addCleanup(lambda: setattr(pdf_ocr, 'unavailable_reason', saved))
+        self.redact_extra = ['--ocr-pdf']
         self.redact_and_pack()
         report = (self.run_dir / '内部留存-勿外发' / '报告.md').read_text(encoding='utf-8')
         self.assertIn('扫描.pdf', report)   # 列在跳过的文件里
+
+    def test_pdfs_are_listed_not_processed_by_default(self):
+        import csv, pdf_ocr
+        (self.src / '扫描').mkdir()
+        (self.src / '扫描' / '甲.pdf').write_bytes(b'%PDF-1.4\n<< /Type /Pages /Kids [] /Count 3 >>\n%%EOF')
+        (self.src / '财务' / '差旅示例办法.pdf').write_bytes(b'%PDF-1.4')   # 旁边有同名 .docx
+        called = []
+        saved = pdf_ocr.ocr_pdf
+        pdf_ocr.ocr_pdf = lambda path: called.append(path) or []
+        self.addCleanup(lambda: setattr(pdf_ocr, 'ocr_pdf', saved))
+        self.redact_and_pack()
+        self.assertEqual(called, [])                                          # 默认不识别
+        self.assertEqual(list((self.run_dir / '脱敏文件').rglob('甲*')), [])
+        with (self.run_dir / '内部留存-勿外发' / 'PDF清单.csv').open(encoding='utf-8-sig') as f:
+            rows = {r['原件路径']: r for r in csv.DictReader(f)}
+        self.assertEqual(rows['扫描/甲.pdf']['页数'], '3')
+        self.assertEqual(rows['扫描/甲.pdf']['这次'], '未处理')
+        self.assertEqual(rows['财务/差旅示例办法.pdf']['这次'], '用了同名 .docx')
+        report = (self.run_dir / '内部留存-勿外发' / '报告.md').read_text(encoding='utf-8')
+        self.assertIn('## PDF（未处理，1 个）', report)
 
     def test_non_text_content_is_counted_per_file(self):
         import csv

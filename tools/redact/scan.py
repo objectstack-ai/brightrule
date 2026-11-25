@@ -145,6 +145,10 @@ class Scan:
                 conf, why = '高', '机构全称（带有限公司等法定后缀，或以地名开头）'
             elif re.search(r'[A-Za-z0-9]', s):
                 conf, why = '中', '机构名称（含字母代号）'
+            elif '集团' in s and 2 <= len(re.sub(ORG_SUFFIX + '$', '', s)) <= 6:
+                conf, why = '中', '集团名称（如「青松集团」）'
+            elif re.search('《[^》]*' + re.escape(s), para):
+                conf, why = '中', '出现在文件标题《…》里的机构名称'
             else:
                 conf, why = '低', '像机构名称，但没有法定后缀，常是普通说法（如「汽车租赁公司」）'
             self.add(cat, s, conf, why, file, para)
@@ -437,7 +441,10 @@ def paragraphs_of(path: Path) -> Tuple[List[str], List[str], List[str]]:
         if 'docProps/core.xml' in names:
             root = _parse(z.read('docProps/core.xml'))
             people += [el.text for tag in (f'{{{DC}}}creator', f'{{{CP}}}lastModifiedBy') for el in root.iter(tag) if el.text]
-            paras += [el.text for el in root.iter(f'{{{DC}}}title') if el.text]
+            # 标题、主题、关键词、备注、类别：WPS / Word 常把文件标题存在这里
+            paras += [el.text for tag in (f'{{{DC}}}title', f'{{{DC}}}subject', f'{{{CP}}}keywords',
+                                          f'{{{DC}}}description', f'{{{CP}}}category')
+                      for el in root.iter(tag) if el.text and el.text.strip()]
         if 'docProps/app.xml' in names:
             root = _parse(z.read('docProps/app.xml'))
             orgs += [el.text for el in root.iter(f'{{{EP}}}Company') if el.text]

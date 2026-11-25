@@ -443,6 +443,15 @@ class ScanTest(unittest.TestCase):
         self.assertEqual(rows['华东示例集团'].replacement, rows['华东示例集团有限公司'].replacement)
         self.assertNotIn('于华东示例集团', rows)
 
+    def test_plain_group_name_is_active_and_properties_are_read(self):
+        import scan
+        sc = scan.Scan([])
+        sc.scan_paragraph('a.docx', '关于印发《青松集团接待管理规定》的通知')
+        sc.scan_paragraph('a.docx', '镇集团党群工作部文件')
+        rows = {c.text: c for c in sc.finish()}
+        self.assertEqual(rows['青松集团'].confidence, '中')        # 默认启用
+        self.assertEqual(rows['镇集团'].confidence, '低')          # 单字前缀，多半是误切
+
     def test_scan_proposes_a_usable_dictionary(self):
         import scan
         tmp = Path(tempfile.mkdtemp())

@@ -276,6 +276,18 @@ class RedactToolTest(unittest.TestCase):
         self.assertIn('| 座机 | 【固定电话】 |', md)
         self.assertIn('文本框：人员A签发', md)
 
+    def test_markdown_stats(self):
+        import mdstats
+        csv_path = self.run_root / 'Markdown统计.csv'
+        self.assertTrue(csv_path.exists())
+        self.assertTrue((self.run_root / 'Markdown统计.md').exists())
+        policies = mdstats.collect(self.run_root / '脱敏文件')
+        self.assertEqual(len(policies), 1)
+        self.assertGreater(policies[0].tokens, 0)
+        self.assertEqual(mdstats.estimate_tokens('一二三四'), 3)        # 4 ÷ 1.5 = 2.7 → 3
+        self.assertEqual(mdstats.estimate_tokens(''), 0)
+        self.assertEqual(mdstats.main(['--input', str(self.run_root)]), 0)
+
     def test_word_can_still_read_it(self):
         if not shutil.which('pandoc'):
             self.skipTest('pandoc 未安装')
@@ -324,6 +336,41 @@ class MarkdownTest(unittest.TestCase):
         self.assertEqual(md.count('框内文字'), 1)     # 兼容副本不重复
         self.assertIn('\\1. 不是列表', md)
 
+    def test_sections_and_table_of_contents_are_marked(self):
+        import docx2md
+
+        def p(text, style=None, anchor=None):
+            ppr = f'<w:pPr><w:pStyle w:val="{style}"/></w:pPr>' if style else ''
+            run = f'<w:r><w:t xml:space="preserve">{text}</w:t></w:r>'
+            if anchor:
+                run = f'<w:hyperlink w:anchor="{anchor}">{run}</w:hyperlink>'
+            return f'<w:p>{ppr}{run}</w:p>'
+        info = ('<w:tbl><w:tr><w:tc><w:p><w:r><w:t>制度名称</w:t></w:r></w:p></w:tc>'
+                '<w:tc><w:p><w:r><w:t>示例办法</w:t></w:r></w:p></w:tc></w:tr></w:tbl>')
+        body = (p('示〔2025〕1号') + p('关于印发《示例办法》的通知') + p('各部门：现印发给你们。') + info
+                + p('目录', ) + p('第一章 总则\t1', 'TOC1', '_Toc1') + p('第二章 附则 3', 'TOC1')
+                + p('示例办法') + p('第一章 总则') + p('第一条 为规范管理，制定本办法。') + p('第二章 附则')
+                + p('第二条 本办法自印发之日起施行。') + p('示例办公室  2025年1月9日印发'))
+        styles = (f'<w:styles {W}><w:style w:type="paragraph" w:styleId="TOC1"><w:name w:val="toc 1"/></w:style></w:styles>')
+        parts = {'word/document.xml': f'<w:document {W}><w:body>{body}</w:body></w:document>'.encode(),
+                 'word/styles.xml': styles.encode()}
+        md = docx2md.docx_to_markdown(parts)
+        heads = [l for l in md.split('\n') if l.startswith('#')]
+        self.assertEqual(heads, ['# 发文通知', '# 制度信息', '# 正文：示例办法',
+                                 '## 第一章 总则', '## 第二章 附则', '# 版记'])
+        self.assertNotIn('目录', md)                                # 目录整体去掉
+        self.assertEqual(md.count('第一章 总则'), 1)                # 只剩正文里的那一处
+
+    def test_manual_table_of_contents(self):
+        import docx2md
+        body = ''.join(f'<w:p><w:r><w:t xml:space="preserve">{t}</w:t></w:r></w:p>' for t in (
+            '目　录', '第一章　总则……………1', '第二章　附则……………2', '示例办法', '第一章　总则', '第一条　为规范管理。'))
+        md = docx2md.docx_to_markdown({'word/document.xml': f'<w:document {W}><w:body>{body}</w:body></w:document>'.encode()})
+        self.assertNotIn('目', md)
+        self.assertNotIn('……', md)
+        self.assertEqual(md.count('第一章'), 1)
+        self.assertIn('# 正文：示例办法', md)
+
     def test_attachments_split_from_body(self):
         import docx2md
 
@@ -357,10 +404,10 @@ class MarkdownTest(unittest.TestCase):
 class SuspectTest(unittest.TestCase):
     def test_generic_words_before_suffix_are_not_names(self):
         text = ('员工外出参加非集团组织的培训，严格按照集团规定，根据各子公司情况，本办法由集团解释，'
-                '出差申请单报集团备案，已经C集团研究，B市C集团有限责任公司印发，合作单位南方未登记贸易有限公司。')
+                '出差申请单报集团备案，已经M集团研究，K市M集团有限责任公司印发，合作单位南方未登记贸易有限公司。')
         found = redact.suspects_in(text, [])
-        self.assertIn('C集团', found)
-        self.assertIn('B市C集团有限责任公司', found)
+        self.assertIn('M集团', found)
+        self.assertIn('K市M集团有限责任公司', found)
         self.assertIn('南方未登记贸易有限公司', found)
         for noise in ('非集团', '按照集团', '各子公司', '由集团', '报集团', '集团', '子公司'):
             self.assertNotIn(noise, found)
@@ -397,15 +444,110 @@ class SpacedNameTest(unittest.TestCase):
             self.assertEqual(scan.person_names(text), [], text)
 
     def test_redaction_ignores_layout_spaces_between_chinese_characters(self):
-        red = redact.Redactor([redact.Term('人名', '张三丰', '人员A'), redact.Term('集团', 'B市C集团', '甲集团')], [])
+        red = redact.Redactor([redact.Term('人名', '张三丰', '人员A'), redact.Term('集团', 'K市M集团', '甲集团')], [])
         self.assertEqual(red.redact_string('签发人：张 三 丰')[0], '签发人：人员A')
         self.assertEqual(red.redact_string('签发人：张\u3000\u3000三\u3000\u3000丰。')[0], '签发人：人员A。')
-        self.assertEqual(red.redact_string('B 市 C 集团')[0], '甲集团')
+        self.assertEqual(red.redact_string('K 市 M 集团')[0], '甲集团')
         self.assertEqual([t.original for t in red.leaked_terms('落款：张 三 丰')], ['张三丰'])
         self.assertEqual(red.redact_string('张三 丰收')[1][0].term, '张三丰')   # 命中记到词典原文上
 
 
+class RobustnessTest(unittest.TestCase):
+    def test_bad_file_does_not_stop_the_batch_and_doc_is_listed(self):
+        tmp = Path(tempfile.mkdtemp())
+        try:
+            src = tmp / '原件'
+            src.mkdir()
+            make_docx(src / '好文件.docx')
+            (src / '坏文件.docx').write_bytes(b'not a zip')
+            (src / '旧格式.doc').write_bytes(b'\xd0\xcf\x11\xe0 old word')
+            out = tmp / '结果'
+            code = redact.main(['--input', str(src), '--dict', str(HERE.parent / '词典示例.csv'), '--output', str(out)])
+            self.assertEqual(code, 1)                                # 坏文件要处理
+            run = next(out.iterdir())
+            self.assertEqual([p.name for p in (run / '脱敏文件').glob('*.docx')], ['好文件.docx'])
+            report = (run / '内部留存-勿外发' / '报告.md').read_text(encoding='utf-8')
+            self.assertIn('不是有效的 .docx', report)
+            self.assertIn('旧格式.doc', report)
+            self.assertIn('./run.sh convert', report)
+        finally:
+            shutil.rmtree(tmp)
+
+
+class ConvertTest(unittest.TestCase):
+    def test_convert_in_place_next_to_the_old_file(self):
+        import convert
+        tmp = Path(tempfile.mkdtemp())
+        try:
+            src = tmp / '原件'
+            (src / '子目录').mkdir(parents=True)
+            make_docx(src / '已是docx.docx')
+            make_docx(src / '子目录' / '扩展名写错.doc')          # 其实是 .docx：只更正扩展名，不需要转换工具
+            make_docx(src / '人工另存过.doc')
+            (src / '人工另存过.docx').write_bytes(b'manual version')  # 同名 .docx 已存在：不覆盖
+            (src / '说明.pdf').write_bytes(b'%PDF')
+            self.assertEqual(convert.main(['--input', str(src)]), 0)
+            self.assertTrue((src / '子目录' / '扩展名写错.docx').exists())
+            self.assertTrue((src / '子目录' / '扩展名写错.doc').exists())       # 旧文件保留
+            self.assertEqual((src / '人工另存过.docx').read_bytes(), b'manual version')
+            report = next(tmp.glob('原件-转换报告-*.md')).read_text(encoding='utf-8')
+            self.assertIn('扩展名写错.doc（扩展名更正）', report)
+            self.assertIn('人工另存过.doc', report)
+            self.assertIn('说明.pdf', report)
+            # 脱敏：.doc 旁边已有同名 .docx 的，不算跳过；只处理 .docx
+            out = tmp / '结果'
+            redact.main(['--input', str(src), '--dict', str(HERE.parent / '词典示例.csv'), '--output', str(out)])
+            run = next(out.iterdir())
+            report = (run / '内部留存-勿外发' / '报告.md').read_text(encoding='utf-8')
+            self.assertNotIn('扩展名写错.doc\n', report.split('## 跳过的文件')[-1] if '## 跳过的文件' in report else '')
+            self.assertIn('说明.pdf', report)
+            self.assertTrue((run / '脱敏文件' / '子目录' / '扩展名写错.docx').exists())
+            # --output 不能放在原件目录里
+            with self.assertRaises(SystemExit):
+                convert.main(['--input', str(src), '--output', str(src / 'x')])
+        finally:
+            shutil.rmtree(tmp)
+
+    def test_convert_to_another_folder_copies_docx(self):
+        import convert
+        tmp = Path(tempfile.mkdtemp())
+        try:
+            src = tmp / '原件'
+            src.mkdir()
+            make_docx(src / 'a.docx')
+            make_docx(src / 'b.doc')
+            out = tmp / '原件-docx'
+            self.assertEqual(convert.main(['--input', str(src), '--output', str(out)]), 0)
+            self.assertEqual(sorted(p.name for p in out.iterdir()), ['a.docx', 'b.docx'])
+            self.assertFalse((src / 'b.docx').exists())
+        finally:
+            shutil.rmtree(tmp)
+
+
 class ScanTest(unittest.TestCase):
+    def test_short_forms_share_the_full_names_code_whatever_the_order(self):
+        import scan
+        sc = scan.Scan([])
+        # 简称先出现、中间写法再出现、全称最后才出现：仍是一组
+        for para in ('经M集团研究决定。', '由K市M集团负责。', '本办法适用于华东示例集团。',
+                     'K市M集团有限责任公司  2025年1月9日印发', '华东示例集团有限公司文件'):
+            sc.scan_paragraph('a.docx', para)
+        rows = {c.text: c for c in sc.finish()}
+        self.assertEqual({rows[t].replacement for t in ('M集团', 'K市M集团', 'K市M集团有限责任公司')},
+                         {rows['K市M集团有限责任公司'].replacement})
+        self.assertEqual(rows['M集团'].group, 'K市M集团有限责任公司')
+        self.assertEqual(rows['华东示例集团'].replacement, rows['华东示例集团有限公司'].replacement)
+        self.assertNotIn('于华东示例集团', rows)
+
+    def test_plain_group_name_is_active_and_properties_are_read(self):
+        import scan
+        sc = scan.Scan([])
+        sc.scan_paragraph('a.docx', '关于印发《青松集团接待管理规定》的通知')
+        sc.scan_paragraph('a.docx', '村集团办公室文件')
+        rows = {c.text: c for c in sc.finish()}
+        self.assertEqual(rows['青松集团'].confidence, '中')        # 默认启用
+        self.assertEqual(rows['村集团'].confidence, '低')          # 单字前缀，多半是误切
+
     def test_scan_proposes_a_usable_dictionary(self):
         import scan
         tmp = Path(tempfile.mkdtemp())
@@ -415,16 +557,16 @@ class ScanTest(unittest.TestCase):
             cells = ('<w:tbl><w:tr><w:tc><w:p><w:r><w:t>经办人</w:t></w:r></w:p></w:tc>'
                      '<w:tc><w:p><w:r><w:t xml:space="preserve">赵 六</w:t></w:r></w:p></w:tc></w:tr></w:tbl>')
             body = cells + ''.join(f'<w:p><w:r><w:t xml:space="preserve">{t}</w:t></w:r></w:p>' for t in (
-                '关于印发《C集团差旅费管理办法》的通知', 'BCB字﹝2025﹞3号',
-                '各下属企业：经C集团研究，切实加强集团管理，请结合集团实际执行。',
-                '制度编码：C集-JY-ZHB-03-07-01', '一类地区指北京、上海；三类地区指A省内城市（不含D市）。',
-                '参照B市财办﹝2021﹞36号执行，联系人：张建国，电话 13812345678。', '签发人：亓 玉 林',
-                '由王小明总经理签发，提高总经理办公会效率。', '办公地址：B市示例区建设路18号3楼。',
+                '关于印发《M集团差旅费管理办法》的通知', 'HDB字﹝2025﹞3号',
+                '各下属企业：经M集团研究，切实加强集团管理，请结合集团实际执行。',
+                '制度编码：华集-XZ-GL-03-07-01', '一类地区指北京、上海；三类地区指J省内城市（不含P市）。',
+                '参照K市财办﹝2021﹞36号执行，联系人：张建国，电话 13812345678。', '签发人：亓 玉 林',
+                '由王小明总经理签发，提高总经理办公会效率。', '办公地址：K市示例区建设路18号3楼。',
                 '审批请登录华示OA系统，详见 https://oa.cgroup-demo.com/x 。',
-                'B市C集团有限责任公司综合办公室  2025年1月9日印发'))
+                'K市M集团有限责任公司综合办公室  2025年1月9日印发'))
             doc = f'<w:document {W}><w:body>{body}</w:body></w:document>'
             parts = dict(PARTS, **{'word/document.xml': doc, 'word/comments.xml': COMMENTS})
-            with zipfile.ZipFile(src / 'C集团差旅费管理办法.docx', 'w') as z:
+            with zipfile.ZipFile(src / 'M集团差旅费管理办法.docx', 'w') as z:
                 for name, text in parts.items():
                     z.writestr(name, text)
             out = tmp / '结果'
@@ -435,10 +577,10 @@ class ScanTest(unittest.TestCase):
                 rows = {r['原文']: r for r in csv.DictReader(f) if r['原文']}
             active = {k for k, r in rows.items() if not r['类别'].startswith('#')}
             # 全称、简称同组同替换值
-            for name in ('B市C集团有限责任公司', 'B市C集团', 'C集团'):
+            for name in ('K市M集团有限责任公司', 'K市M集团', 'M集团'):
                 self.assertIn(name, active)
-            self.assertEqual({rows[n]['替换为'] for n in ('B市C集团有限责任公司', 'B市C集团', 'C集团')}, {rows['C集团']['替换为']})
-            for name in ('B市', 'A省', 'D市', 'BCB字', '亓玉林', '赵六', 'C集-JY-ZHB-03-07-01', '张建国', '王小明', '王某某', 'cgroup-demo.com'):
+            self.assertEqual({rows[n]['替换为'] for n in ('K市M集团有限责任公司', 'K市M集团', 'M集团')}, {rows['M集团']['替换为']})
+            for name in ('K市', 'J省', 'P市', 'HDB字', '亓玉林', '赵六', '华集-XZ-GL-03-07-01', '张建国', '王小明', '王某某', 'cgroup-demo.com'):
                 self.assertIn(name, active, name)
             self.assertTrue(any('建设路18号' in k for k in active))
             self.assertIn('华东示例控股集团有限公司', active)      # Word 属性里的单位
@@ -446,11 +588,149 @@ class ScanTest(unittest.TestCase):
             self.assertNotIn('北京', active)                       # 常见省市名默认不启用
             for noise in ('切实加强集团', '结合集团', '一类地区', '三类地区', '提高', '高总', '财办', '13812345678'):
                 self.assertFalse(any(noise == k for k in active), noise)
+            self.assertEqual(scan.main(['--input', str(src), '--output', str(out)]), 0)   # 同一小时再扫一次
+            self.assertTrue(any(d.name.endswith('-扫描-2') for d in out.iterdir()))
             # 候选词典可以直接给脱敏用
             terms = redact.load_dictionary(run / '候选词典.csv')
             self.assertTrue(terms)
         finally:
             shutil.rmtree(tmp)
+
+
+def _policy_docx(path: Path, fee: str = '100') -> None:
+    """合成的一份制度：发文通知、制度信息表、两章、缺第三条、一个表单附件、版记。名称全部虚构。"""
+    def p(t, brk=False):
+        ppr = '<w:pPr><w:pageBreakBefore/></w:pPr>' if brk else ''
+        return f'<w:p>{ppr}<w:r><w:t xml:space="preserve">{t}</w:t></w:r></w:p>'
+
+    def tbl(rows):
+        return '<w:tbl>' + ''.join('<w:tr>' + ''.join(f'<w:tc>{p(c)}</w:tc>' for c in r) + '</w:tr>' for r in rows) + '</w:tbl>'
+    body = (p('华东示例集团文件') + p('华示字〔2025〕7号　签发人：王某某') + p('关于印发《差旅示例办法》的通知')
+            + p('各部门：现印发给你们。') + p('华东示例集团综合办公室') + p('2025年3月1日')
+            + tbl([['制度名称', '差旅示例办法', '制度层级', '三级'], ['制度编码', 'HD-CW-001', '生效日期', '2025年3月1日'],
+                   ['责任部门', '财务部', '制度类别', '财务类']])
+            + p('差旅示例办法') + p('第一章　总则') + p('第一条　为规范差旅，制定本办法。') + p('第二条　适用于全体员工。')
+            + p('第二章　标准') + p(f'第四条　伙食补助每人每天{fee}元。') + p('第五条　本办法自2025年3月1日起施行。')
+            + p('附件：出差申请单') + p('附件1', True) + p('出差申请单') + tbl([['出差人', '', '部门', ''], ['事由', '', '审批', '']])
+            + p('华东示例集团综合办公室　2025年3月1日印发'))
+    parts = dict(PARTS)
+    parts['word/document.xml'] = f'<w:document {W}><w:body>{body}<w:sectPr/></w:body></w:document>'
+    parts.pop('word/comments.xml')
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, 'w') as z:
+        for name, text in parts.items():
+            z.writestr(name, text)
+
+
+class PackageTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.src = self.tmp / '原件'
+        _policy_docx(self.src / '财务' / '差旅示例办法.docx')
+        self.dict = self.tmp / '词典.csv'
+        self.dict.write_text('类别,原文,替换为,备注\n集团,华东示例集团,本集团,\n人名,王某某,,\n', encoding='utf-8')
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def redact_and_pack(self):
+        import package
+        out = self.tmp / '结果'
+        redact.main(['--input', str(self.src), '--dict', str(self.dict), '--output', str(out)])
+        run = sorted(out.iterdir())[-1]
+        self.assertTrue((run / '内部留存-勿外发' / '文件清单.json').exists())
+        package.main(['--run', str(run), '--originals', str(self.src), '--output', str(self.tmp / '导入包')])
+        return sorted((self.tmp / '导入包').iterdir())[-1]
+
+    def test_package_builds_manifest_sheet_and_report(self):
+        import json
+        pkg = self.redact_and_pack()
+        folder = pkg / '财务' / '差旅示例办法'
+        m = json.loads((folder / 'manifest.json').read_text(encoding='utf-8'))
+        self.assertEqual(m['meta']['policy_no'], 'HD-CW-001')
+        self.assertEqual(m['meta']['effective_date'], '2025-03-01')
+        self.assertEqual(m['meta']['version_no'], '华示字〔2025〕7号')
+        body, att = m['documents']
+        text = (folder / '正文.md').read_text(encoding='utf-8')
+        self.assertNotIn('华东示例集团', text)
+        self.assertNotIn('# 附件（已拆分', text)
+        self.assertEqual([e['article'] for e in body['article_index']], ['第一条', '第二条', '第四条', '第五条'])
+        first, last = body['article_index'][0], body['article_index'][-1]
+        self.assertTrue(text[first['redacted'][0]:].startswith('**第一条**'))
+        self.assertEqual(text[last['redacted'][0]:last['redacted'][1]], '**第五条** 本办法自2025年3月1日起施行。')
+        self.assertEqual(first['chapter'], '第一章　总则')
+        self.assertEqual(body['text_chars'], len(text))
+        self.assertEqual(body['text_tokens'], -(-len(text) * 2 // 3))
+        self.assertEqual(body['content_hash'], hashlib.sha256((self.src / '财务' / '差旅示例办法.docx').read_bytes()).hexdigest())
+        self.assertEqual(att['attachment_class'], 'form')
+        self.assertTrue((folder / '附件1.original.docx').exists())
+        sheet = (pkg / '批次清单.csv').read_text(encoding='utf-8-sig')
+        self.assertIn('缺条：第3条', sheet)
+        # 同一份原件再打包一次，附件原件的哈希不变（导入去重靠它）
+        pkg2 = self.redact_and_pack()
+        m2 = json.loads((pkg2 / '财务' / '差旅示例办法' / 'manifest.json').read_text(encoding='utf-8'))
+        self.assertEqual([d['content_hash'] for d in m2['documents']], [d['content_hash'] for d in m['documents']])
+
+    def test_import_plan_is_idempotent_and_guards_current_versions(self):
+        import importer
+        pkg = self.redact_and_pack()
+
+        class FakeApi(importer.Api):
+            def __init__(self):
+                self.base, self.rows, self.files, self.n = 'http://test', {}, {}, 0
+
+            def _id(self):
+                self.n += 1
+                return f'id{self.n}'
+
+            def find(self, obj, where, select=None):
+                return [dict(r) for r in self.rows.get(obj, []) if all(r.get(k) == v for k, v in where.items())]
+
+            def create(self, obj, row):
+                row = {**row, 'id': self._id()}
+                if obj == 'brightrule_policy_version':
+                    row.setdefault('version_status', 'draft')
+                self.rows.setdefault(obj, []).append(row)
+                return row
+
+            def update(self, obj, rid, row):
+                for r in self.rows[obj]:
+                    if r['id'] == rid:
+                        r.update(row)
+
+            def upload(self, data, filename, mime=importer.DOCX_MIME):
+                fid = self._id()
+                self.files[fid] = data
+                return fid
+
+            def category_options(self):
+                return [('finance', '财务')]
+
+        api = FakeApi()
+        row = importer.read_sheet(pkg)[0]
+        rp = importer.plan_row(api, pkg, row, api.category_options())
+        self.assertIsNone(rp.rejected)
+        importer.apply_row(api, rp)
+        self.assertEqual(len(api.rows['brightrule_policy_document']), 2)
+        self.assertEqual(api.rows['brightrule_policy'][0]['category'], 'finance')
+        # 再来一次：无事可做
+        self.assertEqual(importer.plan_row(api, pkg, row, []).steps, [])
+        # 设为现行后，内容变了就拒绝
+        api.rows['brightrule_policy_version'][0]['version_status'] = 'current'
+        _policy_docx(self.src / '财务' / '差旅示例办法.docx', fee='120')
+        pkg2 = self.redact_and_pack()
+        rp = importer.plan_row(api, pkg2, importer.read_sheet(pkg2)[0], [])
+        self.assertIn('已是现行', rp.rejected)
+        # 换版本号：新建版本
+        row2 = dict(importer.read_sheet(pkg2)[0], 版本号='华示字〔2025〕9号')
+        rp = importer.plan_row(api, pkg2, row2, [])
+        self.assertIsNone(rp.rejected)
+        self.assertIn('新建版本', ' '.join(rp.actions))
+
+    def test_import_refuses_internal_folder(self):
+        import importer
+        with self.assertRaises(SystemExit):
+            importer.main(['--package', str(self.tmp / '内部留存-勿外发'), '--url', 'http://test'])
 
 
 if __name__ == '__main__':

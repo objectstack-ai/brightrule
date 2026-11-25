@@ -26,8 +26,9 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from convert import CONVERTIBLE, has_docx_sibling  # noqa: E402
 from redact import (CP, DC, EP, EXTRA_LEAD, MC, REL, SUSPECT_LEAD, TEXT_PARTS, WP, _nearest, _parse,  # noqa: E402
-                    accept_revisions, load_dictionary, run_dir, w)
+                    accept_revisions, load_dictionary, w)
 
 TIANGAN = '甲乙丙丁戊己庚辛壬癸'
 
@@ -53,9 +54,9 @@ PLACE_BAD_CHAR = set('的和与及或在是为对由从向给按将把被以于�
 PROVINCES = ('北京 天津 上海 重庆 河北 山西 辽宁 吉林 黑龙江 江苏 浙江 安徽 福建 江西 山东 河南 湖北 湖南 广东 海南 四川 贵州 云南 '
              '陕西 甘肃 青海 台湾 内蒙古 广西 西藏 宁夏 新疆 香港 澳门').split()
 
-# 文号：机关代字〔年份〕序号号，如 BCB字﹝2025﹞3号、某政发〔2024〕12号
+# 文号：机关代字〔年份〕序号号，如 HDB字﹝2025﹞3号、某政发〔2024〕12号
 DOC_NO = re.compile(r'([A-Za-z一-龥]{1,12}?)\s*[〔﹝\[［【(（]\s*((?:19|20)\d{2})\s*[〕﹞\]］】)）]\s*(\d{1,4})\s*号')
-# 编码：带两个以上连字符、同时有字母和数字，如 C集-JY-ZHB-03-07-01、HT-2024-0012
+# 编码：带两个以上连字符、同时有字母和数字，如 华集-XZ-GL-03-07-01、HT-2024-0012
 CODE = re.compile(r'(?<![A-Za-z0-9-])[A-Za-z0-9一-龥]{1,8}(?:[-－_][A-Za-z0-9]{1,10}){2,}(?![A-Za-z0-9])')
 # 独立的英文大写缩写（常是机构或系统代号）
 ABBR = re.compile(r'(?<![A-Za-z])[A-Z]{2,8}(?![A-Za-z])')
@@ -144,6 +145,10 @@ class Scan:
                 conf, why = '高', '机构全称（带有限公司等法定后缀，或以地名开头）'
             elif re.search(r'[A-Za-z0-9]', s):
                 conf, why = '中', '机构名称（含字母代号）'
+            elif '集团' in s and 2 <= len(re.sub(ORG_SUFFIX + '$', '', s)) <= 6:
+                conf, why = '中', '集团名称（如「青松集团」）'
+            elif re.search('《[^》]*' + re.escape(s), para):
+                conf, why = '中', '出现在文件标题《…》里的机构名称'
             else:
                 conf, why = '低', '像机构名称，但没有法定后缀，常是普通说法（如「汽车租赁公司」）'
             self.add(cat, s, conf, why, file, para)
@@ -154,14 +159,14 @@ class Scan:
                 self.add('地名', name, '中', '地名（××省 / 市 / 县 / 区）', file, para)
         for m in DOC_NO.finditer(para):
             prefix = trim_lead(m.group(1))
-            # 「B市财办」「A省国资考核字」：地名之后是通用的机关代字，替换地名就够了；「B市BCGO」只留 BCGO
+            # 「K市财办」「J省国资考核字」：地名之后是通用的机关代字，替换地名就够了；「K市HDGO」只留 HDGO
             pm = re.match(r'^[A-Z一-龥]{1,6}?[省市县区]', prefix)
             if pm:
                 prefix = prefix[pm.end():]
                 if re.fullmatch(r'[一-龥]{1,6}', prefix):
                     continue
             if prefix and not re.fullmatch(r'[一-龥]{0,2}', prefix):
-                # 机关代字（如 BCGO、B市财办）替换掉，文号整体就认不出单位了，不必逐个列文号
+                # 机关代字（如 HDGO、K市财办）替换掉，文号整体就认不出单位了，不必逐个列文号
                 self.add('文号', prefix, '高', '公文文号里的机关代字，常是单位简称', file, para)
             else:
                 full = f'{prefix}{m.group(0)[len(m.group(1)):]}'.strip()
@@ -190,31 +195,56 @@ class Scan:
 
     def finish(self) -> List[Candidate]:
         texts = [p for _f, p in self.paragraphs]
-        # 机构简称：全称去掉法定后缀、再去掉地名前缀，在文档里确实出现过的才列出
-        for c in list(self.cands.values()):
-            if c.category in ('集团', '公司', '机构') and c.group is None:
-                c.group = c.text
-                for alias in aliases(c.text):
-                    if alias.lower() in self.known or len(alias) < 2:
-                        continue
-                    hits = [(f, p) for f, p in self.paragraphs if alias in p]
-                    if not hits:
-                        continue
-                    key = (c.category, alias)
-                    a = self.cands.get(key) or Candidate(c.category, alias, '高', f'「{c.text}」的简称', group=c.text)
-                    if a.group is None or a.group == a.text:
-                        a.group, a.confidence, a.reason = c.text, '高', f'「{c.text}」的简称'
-                    for f, p in hits:
-                        a.files.add(f)
-                        if not a.example:
-                            i = p.find(alias)
-                            a.example = p[max(0, i - 12): i + len(alias) + 12]
-                    self.cands[key] = a
-                # 名称里的地名前缀（如「B市」）提高置信度：它能指认公司所在地
-                m = re.match(r'^([A-Z一-龥]{1,6}?[省市县区])', c.text)
-                if m and ('地名', m.group(1)) in self.cands:
-                    p = self.cands[('地名', m.group(1))]
-                    p.confidence, p.reason = '高', f'出现在机构名「{c.text}」里，能指认所在地'
+        # 机构简称：全称去掉法定后缀、再去掉地名前缀，在文档里确实出现过的才列出。
+        # 全称、简称、简称的简称（K市M集团有限责任公司 → K市M集团 → M集团）连成一组，共用一个替换值；
+        # 组名取组里最长的写法。先处理长的，保证简称挂到全称上。
+        parent: Dict[str, str] = {}
+
+        def root(t: str) -> str:
+            while parent.get(t, t) != t:
+                t = parent[t]
+            return t
+
+        def union(a: str, b: str) -> None:
+            ra, rb = root(a), root(b)
+            if ra != rb:
+                keep, drop = (ra, rb) if (len(ra), ra) >= (len(rb), rb) else (rb, ra)
+                parent[drop] = keep
+
+        orgs = sorted((c for c in self.cands.values() if c.category in ('集团', '公司', '机构')),
+                      key=lambda c: -len(c.text))
+        for c in orgs:
+            parent.setdefault(c.text, c.text)
+            for alias in aliases(c.text):
+                if alias.lower() in self.known or len(alias) < 2:
+                    continue
+                hits = [(f, p) for f, p in self.paragraphs if alias in p]
+                if not hits:
+                    continue
+                key = (c.category, alias)
+                a = self.cands.get(key)
+                if a is None:
+                    a = self.cands[key] = Candidate(c.category, alias, '高', f'「{c.text}」的简称')
+                    orgs.append(a)
+                elif a.confidence != '高':
+                    a.confidence, a.reason = '高', f'「{c.text}」的简称'
+                for f, p in hits:
+                    a.files.add(f)
+                    if not a.example:
+                        i = p.find(alias)
+                        a.example = p[max(0, i - 12): i + len(alias) + 12]
+                parent.setdefault(alias, alias)
+                union(c.text, alias)
+            # 名称里的地名前缀（如「K市」）提高置信度：它能指认公司所在地
+            m = re.match(r'^([A-Z一-龥]{1,6}?[省市县区])', c.text)
+            if m and ('地名', m.group(1)) in self.cands:
+                p = self.cands[('地名', m.group(1))]
+                p.confidence, p.reason = '高', f'出现在机构名「{c.text}」里，能指认所在地'
+        for c in self.cands.values():
+            if c.category in ('集团', '公司', '机构'):
+                c.group = root(c.text)
+                if c.group != c.text and c.reason.startswith('「'):
+                    c.reason = f'「{c.group}」的简称'
         # 计数：按最终词在所有段落里出现的次数（不重叠计数）
         for c in self.cands.values():
             c.count = sum(p.count(c.text) for p in texts) or len(c.files)
@@ -407,10 +437,14 @@ def paragraphs_of(path: Path) -> Tuple[List[str], List[str], List[str]]:
                 if text.strip():
                     paras.append(text)
             paras += [el.get(a) for el in root.iter(f'{{{WP}}}docPr') for a in ('descr', 'title') if el.get(a)]
+            paras += [el.get('string') for el in root.iter('{urn:schemas-microsoft-com:vml}textpath') if el.get('string')]  # 艺术字
         if 'docProps/core.xml' in names:
             root = _parse(z.read('docProps/core.xml'))
             people += [el.text for tag in (f'{{{DC}}}creator', f'{{{CP}}}lastModifiedBy') for el in root.iter(tag) if el.text]
-            paras += [el.text for el in root.iter(f'{{{DC}}}title') if el.text]
+            # 标题、主题、关键词、备注、类别：WPS / Word 常把文件标题存在这里
+            paras += [el.text for tag in (f'{{{DC}}}title', f'{{{DC}}}subject', f'{{{CP}}}keywords',
+                                          f'{{{DC}}}description', f'{{{CP}}}category')
+                      for el in root.iter(tag) if el.text and el.text.strip()]
         if 'docProps/app.xml' in names:
             root = _parse(z.read('docProps/app.xml'))
             orgs += [el.text for el in root.iter(f'{{{EP}}}Company') if el.text]
@@ -441,14 +475,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         for t in load_dictionary(args.dict):
             known += [t.original, t.replacement]
     scan = Scan(known)
-    files = sorted(p for p in args.input.rglob('*.docx') if not p.name.startswith(('~$', '.')))
+    everything = sorted(p for p in args.input.rglob('*') if p.is_file() and not p.name.startswith(('~$', '.')))
+    files = [p for p in everything if p.suffix.lower() == '.docx']
+    old = [p for p in everything if p.suffix.lower() in CONVERTIBLE and not has_docx_sibling(p)]
     failed = []
-    for path in files:
-        rel = str(path.relative_to(args.input))
+    targets: List[Tuple[Path, str]] = [(p, str(p.relative_to(args.input))) for p in files]
+    for path, rel in targets:
         try:
             paras, people, orgs = paragraphs_of(path)
-        except (zipfile.BadZipFile, KeyError, ValueError) as e:
-            failed.append(f'{rel}：{e}')
+        except zipfile.BadZipFile:
+            failed.append(f'{rel}：不是有效的 .docx（可能是改了扩展名的 .doc，或文件已损坏）')
+            continue
+        except Exception as e:  # 一个文件出错不影响其他文件
+            failed.append(f'{rel}：读取失败（{type(e).__name__}）')
             continue
         for person in people:
             if person.strip() and person.strip().lower() not in GENERIC_AUTHORS:
@@ -461,15 +500,23 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             scan.scan_paragraph(rel, para)
     cands = scan.finish()
 
-    out_root = run_dir(args.output, _dt.datetime.now())
-    out_root = out_root.with_name(out_root.name + '-扫描')
+    stamp = _dt.datetime.now().strftime('%Y%m%d-%H') + '-扫描'
+    out_root, n = args.output / stamp, 2
+    while out_root.exists():  # 同一小时再扫一次：…-扫描-2
+        out_root, n = args.output / f'{stamp}-{n}', n + 1
     out_root.mkdir(parents=True)
     write_dictionary(out_root / '候选词典.csv', cands)
-    write_report(out_root / '扫描报告.md', cands, files, failed, args)
+    write_report(out_root / '扫描报告.md', cands, [p for p, _r in targets], failed, args)
     by_conf = defaultdict(int)
     for c in cands:
         by_conf[c.confidence] += 1
-    print(f'扫描 {len(files)} 个 .docx，找到 {len(cands)} 个候选：置信度高 {by_conf["高"]}、中 {by_conf["中"]}、低 {by_conf["低"]}（低的默认注释掉）。')
+    if old:
+        print(f'注意：有 {len(old)} 个 .doc / .rtf / .wps 等旧格式文件没有扫描。先运行 ./run.sh convert 转成同名 .docx，再重新扫描：')
+        for p in old[:10]:
+            print(f'  {p.relative_to(args.input)}')
+    for f in failed:
+        print(f'没扫到：{f}')
+    print(f'扫描 {len(targets)} 个文件，找到 {len(cands)} 个候选：置信度高 {by_conf["高"]}、中 {by_conf["中"]}、低 {by_conf["低"]}（低的默认注释掉）。')
     print(f'候选词典：{out_root / "候选词典.csv"}')
     print(f'扫描报告：{out_root / "扫描报告.md"}')
     return 0

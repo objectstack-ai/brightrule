@@ -22,6 +22,7 @@ import os
 import re
 import sys
 import time
+import traceback
 import zipfile
 from collections import Counter, OrderedDict
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -32,7 +33,9 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 from lxml import etree
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from convert import CONVERTIBLE, has_docx_sibling  # noqa: E402
 from docx2md import attachment_docx, document_markdown, split_document  # noqa: E402
+import mdstats  # noqa: E402
 
 # ── Word XML 命名空间 ──────────────────────────────────────────────────────
 W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
@@ -78,14 +81,14 @@ SUSPECT_ORG = re.compile(
 )
 # 机构名前面常连着的普通词：从最后一个这样的词之后才算名称。
 # 「员工外出参加非集团」→「集团」、「根据各子公司」→「子公司」，剩下的只是通用称呼，不提示；
-# 「已经C集团」→「C集团」、「B市C集团」保持不变，照常提示。
+# 「已经M集团」→「M集团」、「K市M集团」保持不变，照常提示。
 SUSPECT_LEAD = re.compile(
     r'.*(?:按照|根据|依据|参照|参加|参与|经过|通过|对于|关于|以及|已经|严格|所属|下属|直属|办法|规定|制度|'
     r'申请单|部门|员工|人员|单位|全体|报送|上报|报|按|经|由|向|对|在|从|与|和|及|或|的|为|是|给|至|各|本|该|此|其|非|全|总|我|贵)'
 )
 # 机构名前面常连着的动词、副词等（「切实加强集团」「进一步规范集团」）
 EXTRA_LEAD = re.compile(
-    r'.*(?:如|若|即|系|属|指|含|包括|例如|比如|其中|以及|同时|分别|不得|应当|应|须|可|并|且|向|及|'
+    r'.*(?:适用于|用于|位于|基于|鉴于|由于|属于|对于|关于|如|若|即|系|属|指|含|包括|例如|比如|其中|以及|同时|分别|不得|应当|应|须|可|并|且|向|及|'
     r'加强|履行|形成|结合|规范|使用|落实|执行|遵守|维护|代表|损害|制定|实际|管理|服务|支持|建立|完善|推进|提升|保障|实现|'
     r'开展|组织|参照|适用|涉及|视为|作为|成为|属于|设立|成立|委托|授权|聘请|选择|具有|采购|提供|产生|发生|承担|实施|促进|推动|'
     r'进一步|切实|严格|认真|贯彻|坚持|加快|深化|强化|优化|统筹|协调|配合|联合|下发|印发|转发|发布|颁布|出台|修订|废止|'
@@ -287,6 +290,7 @@ class FileResult:
     attachments: List[str] = field(default_factory=list)  # 拆出的附件：「附件1-标题（表格 1 个）」
     leaks: List[str] = field(default_factory=list)
     error: Optional[str] = None
+    warnings: List[str] = field(default_factory=list)
 
 
 def _parse(data: bytes) -> etree._Element:
@@ -565,10 +569,19 @@ def process_docx(src: Path, dst: Path, red: Redactor, orig_md: Optional[Path] = 
     texts = all_text(out)
     md_out, att_md = None, []
     if orig_md is not None:
-        md_out, att_md = document_markdown(out, split)
-        texts[dst.with_suffix('.md').name] = md_out
-        texts.update((f'{a.name}.md', md) for a, md in att_md)
-    attachments = split_document(_parse(out['word/document.xml']))[1] if split and 'word/document.xml' in out else []
+        try:
+            md_out, att_md = document_markdown(out, split)
+        except Exception as e:  # Markdown 只是附带产物：失败不影响脱敏后的 .docx
+            md_out, att_md = None, []
+            result.warnings.append(f'Markdown 生成失败（{_where(e)}），只输出了 .docx')
+        if md_out is not None:
+            texts[dst.with_suffix('.md').name] = md_out
+            texts.update((f'{a.name}.md', md) for a, md in att_md)
+    try:
+        attachments = split_document(_parse(out['word/document.xml']))[1] if split and 'word/document.xml' in out else []
+    except Exception as e:
+        attachments = []
+        result.warnings.append(f'附件拆分失败（{_where(e)}），附件留在完整的 .docx 里')
     result.attachments = [f'{a.name}（表格 {a.tables} 个）' for a in attachments]
 
     # 泄漏复查：输出文件里不得再出现任何词典原文或规则命中
@@ -598,7 +611,11 @@ def process_docx(src: Path, dst: Path, red: Redactor, orig_md: Optional[Path] = 
         for a, md in att_md:
             (attachment_dir(dst) / f'{a.name}.md').write_text(md, encoding='utf-8')
         orig_md.parent.mkdir(parents=True, exist_ok=True)
-        orig_main, orig_att = document_markdown(parts, split)
+        try:
+            orig_main, orig_att = document_markdown(parts, split)
+        except Exception as e:
+            result.warnings.append(f'原件 Markdown 生成失败（{_where(e)}）')
+            return result
         orig_md.write_text(orig_main, encoding='utf-8')
         if orig_att:
             attachment_dir(orig_md).mkdir(parents=True, exist_ok=True)
@@ -633,12 +650,21 @@ def _init_worker(red: 'Redactor', split: bool = True) -> None:
     _RED, _SPLIT = red, split
 
 
+def _where(e: BaseException) -> str:
+    """错误类型和出错的代码位置（不含文档内容），方便反馈问题。"""
+    tb = traceback.extract_tb(e.__traceback__)
+    loc = f' @ {Path(tb[-1].filename).name}:{tb[-1].lineno}' if tb else ''
+    return f'{type(e).__name__}{loc}'
+
+
 def _worker(src: Path, dst: Path, orig_md: Optional[Path] = None) -> FileResult:
     before = sha256(src)
     try:
         res = process_docx(src, dst, _RED, orig_md, _SPLIT)
-    except (zipfile.BadZipFile, etree.XMLSyntaxError, KeyError, ValueError) as e:
-        res = FileResult(source=src, error=f'{type(e).__name__}: {e}')
+    except zipfile.BadZipFile:
+        res = FileResult(source=src, error='不是有效的 .docx（可能是改了扩展名的 .doc，或文件已损坏）')
+    except Exception as e:  # 一个文件出错不影响其他文件
+        res = FileResult(source=src, error=f'处理失败：{_where(e)}')
     if sha256(src) != before:  # 源文件只读的保证
         res.error = '源文件在处理过程中被修改（不应发生）'
     return res
@@ -677,7 +703,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     internal.mkdir(parents=True)
 
     sources = sorted(p for p in args.input.rglob('*') if p.is_file() and not p.name.startswith(('~$', '.')))
-    skipped = [p for p in sources if p.suffix.lower() != '.docx']
+    # 旁边已有同名 .docx 的 .doc（就地转换的结果）只处理 .docx，不算跳过
+    skipped = [p for p in sources if p.suffix.lower() != '.docx' and not has_docx_sibling(p)]
     jobs = []
     for src in sources:
         if src.suffix.lower() != '.docx':
@@ -710,6 +737,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     summary = summarize(results, terms, patterns)
     write_mapping(internal / '对照表.csv', results, args.input)
+    write_manifest(internal / '文件清单.json', results, args.input, docs_dir)
     write_summary(internal / '替换汇总.csv', summary)
     write_report(internal / '报告.md', results, skipped, args, out_root, now, len(terms), len(patterns), summary)
 
@@ -719,7 +747,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     dict_hits = sum(s.count for s in dict_rows)
     rule_hits = sum(s.count for s in summary if s.source == '规则')
     unused = [s for s in dict_rows if s.count == 0]
-    print(f'处理 {len(results)} 个 .docx（{elapsed:.1f} 秒），跳过 {len(skipped)} 个其他文件，{len(failed)} 个需处理。')
+    print(f'处理 {len(results)} 个 .docx（{elapsed:.1f} 秒）'
+          + f'，跳过 {len(skipped)} 个其他文件，{len(failed)} 个需处理。')
     print(f'共替换 {dict_hits + rule_hits} 处：词典 {dict_hits} 处（{len(dict_rows) - len(unused)}/{len(dict_rows)} 个词条命中），'
           f'格式规则 {rule_hits} 处。' + (f'{len(unused)} 个词条未命中，见报告。' if unused else ''))
     if n_att:
@@ -728,6 +757,29 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if not args.no_md:
         print(f'原件 Markdown：{internal / "原件md"}')
     print(f'报告：{internal / "报告.md"}')
+    if not args.no_md and docs_dir.is_dir():
+        policies = mdstats.collect(docs_dir)
+        if policies:
+            mdstats.write_outputs(out_root, policies)
+            for line in mdstats.summary_lines(policies):
+                print(line)
+            print(f'Markdown 统计：{out_root / "Markdown统计.md"}')
+    if skipped:
+        by_ext = Counter(p.suffix.lower() or '（无扩展名）' for p in skipped)
+        print('\n跳过的文件（' + '，'.join(f'{e} {n} 个' for e, n in by_ext.most_common()) + '）：')
+        for p in skipped[:15]:
+            print(f'  {p.relative_to(args.input)}')
+        if len(skipped) > 15:
+            print(f'  ……共 {len(skipped)} 个，完整列表见报告')
+        if any(p.suffix.lower() in CONVERTIBLE for p in skipped):
+            print('  .doc / .rtf / .wps 等旧格式：先运行 ./run.sh convert 转成同名 .docx，再重新脱敏。')
+    if failed:
+        print('\n需处理的文件：')
+        for r in failed[:15]:
+            print(f'  {r.source.relative_to(args.input)}  ← ' + (r.error or '泄漏复查未通过，见报告'))
+    warned = [r for r in results if r.warnings]
+    if warned:
+        print(f'\n{len(warned)} 个文件有提示（如 Markdown 未生成），见报告。')
     return 1 if failed else 0
 
 
@@ -763,6 +815,20 @@ def write_summary(path: Path, summary: List[SummaryRow]) -> None:
         wr.writerow(['来源', '类别', '原文或规则', '替换为', '替换次数', '涉及文件数'])
         for s in summary:
             wr.writerow([s.source, s.category, s.original, s.replacement, s.count, len(s.files)])
+
+
+def write_manifest(path: Path, results: List[FileResult], input_dir: Path, docs_dir: Path) -> None:
+    """原件与脱敏文件的对应关系，供 package.py 找原件。含原件路径（可能带真实名称），所以放在内部留存。"""
+    import json
+    rows = [{
+        'source': r.source.relative_to(input_dir).as_posix(),
+        'output': r.output.relative_to(docs_dir).as_posix() if r.output else None,
+        'passed': not (r.error or r.leaks),
+        'error': r.error,
+        'leaks': len(r.leaks),
+        'attachments': len(r.attachments),
+    } for r in results]
+    path.write_text(json.dumps({'files': rows}, ensure_ascii=False, indent=1), encoding='utf-8')
 
 
 def write_mapping(path: Path, results: List[FileResult], input_dir: Path) -> None:
@@ -809,7 +875,8 @@ def write_report(path: Path, results: List[FileResult], skipped: List[Path], arg
         lines += [f'- {s.category}：{s.original}' for s in unused]
     lines.append('')
     if skipped:
-        lines += ['## 跳过的文件', '', '不是 .docx：.doc 请在 Word 中「另存为」.docx 后重新运行。', '']
+        lines += ['## 跳过的文件', '', '不是 .docx。.doc / .rtf / .wps 等旧格式：先运行 `./run.sh convert` 转成同名 .docx，'
+                  '或在 Word / WPS 中「另存为」.docx，再重新运行。', '']
         lines += [f'- {p.relative_to(args.input)}' for p in skipped] + ['']
     for r in results:
         rel = r.source.relative_to(args.input)
@@ -818,6 +885,8 @@ def write_report(path: Path, results: List[FileResult], skipped: List[Path], arg
         if r.error:
             lines += [f'- 错误：{r.error}', '']
             continue
+        for wmsg in r.warnings:
+            lines.append(f'- **提示**：{wmsg}')
         lines.append(f'- 输出：{r.output.relative_to(out_root) if r.output else "-"}')
         cats = Counter(h.category for _p, h in r.hits)
         lines.append('- 替换：' + ('，'.join(f'{c} {n} 处' for c, n in cats.most_common()) if cats else '无'))

@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from convert import CONVERTIBLE  # noqa: E402
+from convert import CONVERTIBLE, has_docx_sibling  # noqa: E402
 from redact import (CP, DC, EP, EXTRA_LEAD, MC, REL, SUSPECT_LEAD, TEXT_PARTS, WP, _nearest, _parse,  # noqa: E402
                     accept_revisions, load_dictionary, w)
 
@@ -477,7 +477,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     scan = Scan(known)
     everything = sorted(p for p in args.input.rglob('*') if p.is_file() and not p.name.startswith(('~$', '.')))
     files = [p for p in everything if p.suffix.lower() == '.docx']
-    old = [p for p in everything if p.suffix.lower() in CONVERTIBLE]
+    old = [p for p in everything if p.suffix.lower() in CONVERTIBLE and not has_docx_sibling(p)]
     failed = []
     targets: List[Tuple[Path, str]] = [(p, str(p.relative_to(args.input))) for p in files]
     for path, rel in targets:
@@ -511,7 +511,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     for c in cands:
         by_conf[c.confidence] += 1
     if old:
-        print(f'注意：有 {len(old)} 个 .doc / .rtf / .wps 等旧格式文件没有扫描。先用 ./run.sh convert 转成 .docx，再扫描转换后的目录：')
+        print(f'注意：有 {len(old)} 个 .doc / .rtf / .wps 等旧格式文件没有扫描。先运行 ./run.sh convert 转成同名 .docx，再重新扫描：')
         for p in old[:10]:
             print(f'  {p.relative_to(args.input)}')
     for f in failed:

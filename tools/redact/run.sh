@@ -1,8 +1,8 @@
 #!/bin/bash
 # 制度文档脱敏工具：第一次运行时在 .venv 里安装依赖，之后直接运行。
-# 1. ./run.sh convert --input 原件目录 --output 转换后目录     .doc 等转成 .docx（只有 .docx 时可跳过）
-# 2. ./run.sh scan --input 转换后目录 [--dict 已有词典.csv]     扫描出候选词典
-# 3. ./run.sh --input 转换后目录 --dict 词典.csv               脱敏
+# 1. ./run.sh convert --input 原件目录             .doc 等就地转成同名 .docx（只有 .docx 时可跳过）
+# 2. ./run.sh scan --input 原件目录 [--dict 已有词典.csv]   扫描出候选词典
+# 3. ./run.sh --input 原件目录 --dict 词典.csv              脱敏
 set -euo pipefail
 cd "$(dirname "$0")"
 if [ ! -x .venv/bin/python ]; then

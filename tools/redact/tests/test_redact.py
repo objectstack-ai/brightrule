@@ -428,7 +428,7 @@ class RobustnessTest(unittest.TestCase):
 
 
 class ConvertTest(unittest.TestCase):
-    def test_convert_builds_a_docx_only_mirror(self):
+    def test_convert_in_place_next_to_the_old_file(self):
         import convert
         tmp = Path(tempfile.mkdtemp())
         try:
@@ -436,20 +436,43 @@ class ConvertTest(unittest.TestCase):
             (src / '子目录').mkdir(parents=True)
             make_docx(src / '已是docx.docx')
             make_docx(src / '子目录' / '扩展名写错.doc')          # 其实是 .docx：只更正扩展名，不需要转换工具
+            make_docx(src / '人工另存过.doc')
+            (src / '人工另存过.docx').write_bytes(b'manual version')  # 同名 .docx 已存在：不覆盖
             (src / '说明.pdf').write_bytes(b'%PDF')
-            out = tmp / '原件-docx'
-            self.assertEqual(convert.main(['--input', str(src), '--output', str(out)]), 0)
-            got = sorted(p.relative_to(out).as_posix() for p in out.rglob('*') if p.is_file())
-            self.assertEqual(got, ['子目录/扩展名写错.docx', '已是docx.docx'])
-            report = (tmp / '原件-docx-转换报告.md').read_text(encoding='utf-8')
+            self.assertEqual(convert.main(['--input', str(src)]), 0)
+            self.assertTrue((src / '子目录' / '扩展名写错.docx').exists())
+            self.assertTrue((src / '子目录' / '扩展名写错.doc').exists())       # 旧文件保留
+            self.assertEqual((src / '人工另存过.docx').read_bytes(), b'manual version')
+            report = next(tmp.glob('原件-转换报告-*.md')).read_text(encoding='utf-8')
             self.assertIn('扩展名写错.doc（扩展名更正）', report)
+            self.assertIn('人工另存过.doc', report)
             self.assertIn('说明.pdf', report)
-            # 原件不变；再跑一次，已是最新的跳过
-            self.assertTrue((src / '子目录' / '扩展名写错.doc').exists())
-            self.assertEqual(convert.main(['--input', str(src), '--output', str(out)]), 0)
-            # 转换后目录不能放在原件目录里
+            # 脱敏：.doc 旁边已有同名 .docx 的，不算跳过；只处理 .docx
+            out = tmp / '结果'
+            redact.main(['--input', str(src), '--dict', str(HERE.parent / '词典示例.csv'), '--output', str(out)])
+            run = next(out.iterdir())
+            report = (run / '内部留存-勿外发' / '报告.md').read_text(encoding='utf-8')
+            self.assertNotIn('扩展名写错.doc\n', report.split('## 跳过的文件')[-1] if '## 跳过的文件' in report else '')
+            self.assertIn('说明.pdf', report)
+            self.assertTrue((run / '脱敏文件' / '子目录' / '扩展名写错.docx').exists())
+            # --output 不能放在原件目录里
             with self.assertRaises(SystemExit):
                 convert.main(['--input', str(src), '--output', str(src / 'x')])
+        finally:
+            shutil.rmtree(tmp)
+
+    def test_convert_to_another_folder_copies_docx(self):
+        import convert
+        tmp = Path(tempfile.mkdtemp())
+        try:
+            src = tmp / '原件'
+            src.mkdir()
+            make_docx(src / 'a.docx')
+            make_docx(src / 'b.doc')
+            out = tmp / '原件-docx'
+            self.assertEqual(convert.main(['--input', str(src), '--output', str(out)]), 0)
+            self.assertEqual(sorted(p.name for p in out.iterdir()), ['a.docx', 'b.docx'])
+            self.assertFalse((src / 'b.docx').exists())
         finally:
             shutil.rmtree(tmp)
 

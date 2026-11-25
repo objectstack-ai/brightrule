@@ -33,7 +33,7 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 from lxml import etree
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from convert import CONVERTIBLE  # noqa: E402
+from convert import CONVERTIBLE, has_docx_sibling  # noqa: E402
 from docx2md import attachment_docx, document_markdown, split_document  # noqa: E402
 
 # ── Word XML 命名空间 ──────────────────────────────────────────────────────
@@ -702,7 +702,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     internal.mkdir(parents=True)
 
     sources = sorted(p for p in args.input.rglob('*') if p.is_file() and not p.name.startswith(('~$', '.')))
-    skipped = [p for p in sources if p.suffix.lower() != '.docx']
+    # 旁边已有同名 .docx 的 .doc（就地转换的结果）只处理 .docx，不算跳过
+    skipped = [p for p in sources if p.suffix.lower() != '.docx' and not has_docx_sibling(p)]
     jobs = []
     for src in sources:
         if src.suffix.lower() != '.docx':
@@ -762,7 +763,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if len(skipped) > 15:
             print(f'  ……共 {len(skipped)} 个，完整列表见报告')
         if any(p.suffix.lower() in CONVERTIBLE for p in skipped):
-            print('  .doc / .rtf / .wps 等旧格式：先用 ./run.sh convert 转成 .docx，再用转换后的目录脱敏。')
+            print('  .doc / .rtf / .wps 等旧格式：先运行 ./run.sh convert 转成同名 .docx，再重新脱敏。')
     if failed:
         print('\n需处理的文件：')
         for r in failed[:15]:
@@ -851,8 +852,8 @@ def write_report(path: Path, results: List[FileResult], skipped: List[Path], arg
         lines += [f'- {s.category}：{s.original}' for s in unused]
     lines.append('')
     if skipped:
-        lines += ['## 跳过的文件', '', '不是 .docx。.doc / .rtf / .wps 等旧格式：先运行 `./run.sh convert` 转成 .docx，'
-                  '或在 Word / WPS 中「另存为」.docx，再用转换后的目录重新运行。', '']
+        lines += ['## 跳过的文件', '', '不是 .docx。.doc / .rtf / .wps 等旧格式：先运行 `./run.sh convert` 转成同名 .docx，'
+                  '或在 Word / WPS 中「另存为」.docx，再重新运行。', '']
         lines += [f'- {p.relative_to(args.input)}' for p in skipped] + ['']
     for r in results:
         rel = r.source.relative_to(args.input)

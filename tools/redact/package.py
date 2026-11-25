@@ -50,7 +50,12 @@ from docx2md import DOC_NO_RX, NON_TEXT_MARKERS, attachment_docx, document_markd
 
 CHARS_PER_TOKEN = 1.5
 ARTICLE = re.compile(r'^\*\*(第[零〇一二三四五六七八九十百千0-9]+条(?:之[一二三四五六七八九十]+)?)\*\*', re.M)
-HEADING = re.compile(r'^(?:#{1,6} |附\s*件\s*\d*\s*[:：])', re.M)   # 标题，或正文末尾的「附件：…」清单
+HEADING = re.compile(r'^(?:#{1,6} |附\s*[件表]\s*\d*\s*[:：])', re.M)   # 标题，或正文末尾的「附件：…」「附表：…」清单
+# 写成标题样式的条（「### 第一条 目的」）：统一改成「**第一条** 目的」，和其余条文一个写法
+ARTICLE_HEADING = re.compile(r'^#{3,6} +(第[零〇一二三四五六七八九十百千0-9]+条(?:之[一二三四五六七八九十]+)?)[ \t　]*', re.M)
+# 附件标题前面原文自带的序号：「1.」「1、」「（一）」
+TITLE_ENUM = re.compile(r'^\s*(?:[0-9０-９]+\s*[.．、]|[（(][一二三四五六七八九十0-9]+[)）])\s*')
+ATT_HEAD = re.compile(r'^# (附[件表][0-9]+)(?:[:：]\s*(.*))?$')
 CHAPTER = re.compile(r'^## (.+)$', re.M)
 SECTION = re.compile(r'^# (.+)$', re.M)
 DATE_CN = re.compile(r'((?:19|20)\d{2})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日')
@@ -106,6 +111,16 @@ def date_iso(s: str) -> str:
 
 
 # ── 正文：条号索引、检查 ──────────────────────────────────────────────────
+def normalize_articles(body: str) -> str:
+    """「### 第一条 目的」→「**第一条** 目的」：条文一律以 **第X条** 开头，条号索引和 AI 都按这一种写法认。"""
+    return ARTICLE_HEADING.sub(lambda m: f'**{m.group(1)}** ', body)
+
+
+def attachment_title(title: str) -> str:
+    """附件自己的标题，去掉原文自带的序号：「1.本集团内训师申报表」→「本集团内训师申报表」。"""
+    return TITLE_ENUM.sub('', title or '').strip()
+
+
 def article_index(body: str) -> List[Dict[str, object]]:
     marks = [m.start() for m in HEADING.finditer(body)]
     out = []
@@ -309,7 +324,7 @@ def pack_one(entry: Dict[str, object], docs: Path, originals: Optional[Path], ou
         with zipfile.ZipFile(src) as z:
             parts = {n: z.read(n) for n in z.namelist()}
     red_main = red_md.read_text(encoding='utf-8')
-    body = ATTACH_LISTING.sub('\n', red_main).rstrip('\n') + '\n'
+    body = normalize_articles(ATTACH_LISTING.sub('\n', red_main).rstrip('\n') + '\n')
 
     meta, missing = metadata(document_markdown(parts)[0] if meta_from == 'original' and parts else red_main, red_docx.stem)
     packed.meta, packed.missing = meta, missing
@@ -377,19 +392,23 @@ def pack_one(entry: Dict[str, object], docs: Path, originals: Optional[Path], ou
         (folder / f'附件{no}.md').write_text(md, encoding='utf-8')
         if data is not None:
             (folder / f'附件{no}.docx').write_bytes(data)
+        head = ATT_HEAD.match(md.splitlines()[0] if md else '')
+        label = head.group(1) if head else f'附件{no}'
         if meta_from == 'original' and no in orig_by_no:
-            a_title = orig_by_no[no].title
+            a_title = attachment_title(orig_by_no[no].title)
+            label = orig_by_no[no].label
         else:
-            first = md.splitlines()[0] if md else ''
-            a_title = first.split('：', 1)[1].strip() if '：' in first else ''
-        att = {'doc_kind': 'attachment', 'sort_no': no, 'attachment_class': cls,
-               'title': f"{meta.get('title') or red_docx.stem} 附件{no}" + (f' {a_title}' if a_title else ''),
+            a_title = attachment_title(head.group(2) or '') if head else ''
+        # 标题只写附件自己的名称（原文怎么叫就怎么叫），不再拼制度全名：制度、版本由所属关系带出，
+        # 拼上制度名会让按制度名查找时命中附件
+        att = {'doc_kind': 'attachment', 'sort_no': no, 'attachment_class': cls, 'label': label,
+               'title': a_title or label,
                'md': f'附件{no}.md' if cls != 'original' else None,
                'file': f'附件{no}.docx' if data is not None else None,
                'article_index': None, 'content_hash': sha256(data if data is not None else md.encode('utf-8')),
                **(text_stats(md) if cls != 'original' else text_stats(''))}
         documents.append(att)
-        packed.attachments.append({'no': no, 'title': a_title, 'class': cls, 'tokens': att['text_tokens']})
+        packed.attachments.append({'no': no, 'label': label, 'title': a_title, 'class': cls, 'tokens': att['text_tokens']})
     if images:
         packed.problems.append('含' + '、'.join(f'{k} {v} 处' for k, v in images.items()) +
                                '：这些内容不在 Markdown 里，问询时模型看不到；重要的请对照原件写成文字')
@@ -505,7 +524,7 @@ def write_report(path: Path, packed: List[Packed], args) -> None:
         for pr in p.problems:
             lines.append(f'- {pr}')
         for a in p.attachments:
-            lines.append(f"- 附件{a['no']}：{a['title'] or '（无标题）'} → {CLASS_LABEL[a['class']]}，约 {a['tokens']:,} token")
+            lines.append(f"- {a.get('label') or '附件' + str(a['no'])}：{a['title'] or '（无标题）'} → {CLASS_LABEL[a['class']]}，约 {a['tokens']:,} token")
         lines.append('')
     path.write_text('\n'.join(lines), encoding='utf-8')
 

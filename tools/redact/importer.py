@@ -7,10 +7,11 @@
     python3 importer.py --package 导入包/<时间> --url https://<系统地址> --apply    # 写入
 
 按批次清单里「导入 = 是」的行，依次：
-    制度（按制度编号找；清单里没有编号的按名称找；都找不到就新建为草稿）→ 版本（按制度 + 版本号找，没有就新建为草稿）
-    → 版本文档（按 类型 + 序号 找：没有就上传文件并新建；内容哈希或正文变了就更新；一样就跳过）
-    上传的文件是导入包里有的 附件N.docx（及 正文.docx）：默认正文不传文件、附件传脱敏后的 docx，见 package --files。
-    导入包里没有文件的文档，系统里原有的文件会被去掉。
+    制度（按制度编号找；清单里没有编号的按名称找；都找不到就新建为草稿）
+    → 版本（按制度 + 版本号找，没有就新建为草稿）；正文写在版本上（正文、条号索引、字数、哈希、正文原件）
+    → 附件（按序号找：没有就上传文件并新建；内容哈希、文字、标题或分类变了就更新；一样就跳过）
+    上传的文件是导入包里有的 附件N.docx（及 正文.docx）：默认都不传文件，只进 Markdown，见 package --files。
+    导入包里没有文件的正文或附件，系统里原有的文件会被去掉。
 规则：
     - 同一批导两次，结果不变（全部跳过）；
     - 版本已是「现行」而内容有变化（文档增减、正文、标题或分类不同）：整行拒绝，请用新版本号导入；
@@ -42,7 +43,10 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-DOC_FIELDS = 'id,doc_kind,sort_no,attachment_class,title,content_hash,body_md_redacted,original_file'
+VERSION_FIELDS = 'id,title,version_no,version_status,effective_date,body_md,content_hash,original_file'
+ATTACHMENT_FIELDS = 'id,sort_no,label,attachment_class,title,content_hash,body_md,original_file'
+# 正文写在版本上的字段（manifest 里正文那一项 → 版本）
+BODY_KEYS = ('body_md', 'article_index', 'text_chars', 'text_tokens', 'content_hash')
 DATE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
 # 系统里不能有图片：Markdown 里出现图片语法（![…](…)、<img、data:image）就拒绝整行
 IMAGE_IN_MD = re.compile(r'!\[[^\]]*\]\(|<img\b|data:image/', re.I)
@@ -295,76 +299,117 @@ def plan_row(api: Api, package: Path, row: Dict[str, str], options: List[Tuple[s
 
     version = None
     if policy is not None:
-        vs = api.find('brightrule_policy_version', {'policy': policy['id'], 'version_no': rp.version_no},
-                      'id,title,version_no,version_status,effective_date')
+        vs = api.find('brightrule_policy_version', {'policy': policy['id'], 'version_no': rp.version_no}, VERSION_FIELDS)
         version = vs[0] if vs else None
         rp.version_id = version['id'] if version else None
-    if version is None:
-        rp.actions.append(f'新建版本 {rp.version_no}（草稿）')
-        rp.steps.append(('create_version', {'title': f'{rp.title} {rp.version_no}', 'version_no': rp.version_no,
-                                            'version_status': 'draft',
-                                            **({'effective_date': effective} if effective else {}),
-                                            **({'change_note': f'导入批次 {package.name}'})}))
-    existing: Dict[Tuple[str, int], Dict] = {}
-    if version is not None:
-        for d in api.find('brightrule_policy_document', {'policy_version': version['id']}, DOC_FIELDS):
-            existing[(d.get('doc_kind'), int(d.get('sort_no') or 0))] = d
     is_current = bool(version and version.get('version_status') == 'current')
 
-    doc_changes = []
-    content_changed = False      # 文字、标题、分类、文档增减；只换文件（如不再上传正文 docx）不算
-    seen = set()
-    for doc in manifest['documents']:
-        key = (doc['doc_kind'], int(doc['sort_no']))
-        seen.add(key)
-        md = (folder / doc['md']).read_text(encoding='utf-8') if doc.get('md') else None
+    def read_md(doc: Dict) -> Optional[str]:
+        return (folder / doc['md']).read_text(encoding='utf-8') if doc.get('md') else None
+
+    def file_of(doc: Dict) -> Optional[Path]:
+        name = doc.get('file') or doc.get('original')   # 不传文件的（package 默认）没有
+        return folder / name if name else None
+
+    docs = manifest['documents']
+    for doc in docs:
+        md = read_md(doc)
         if md and IMAGE_IN_MD.search(md):
             rp.rejected = f"{doc.get('md')} 里有图片（系统里不能有图片），请去掉后重新打包"
             rp.steps = []
             return rp
-        fields = {'title': doc['title'], 'doc_kind': doc['doc_kind'], 'sort_no': doc['sort_no'],
-                  'body_md_redacted': md, 'article_index': doc.get('article_index'),
-                  'has_text': doc['has_text'], 'text_chars': doc['text_chars'], 'text_tokens': doc['text_tokens'],
-                  'content_hash': doc['content_hash']}
-        if doc['doc_kind'] == 'attachment':
-            fields['attachment_class'] = doc.get('attachment_class')
-        label = '正文' if doc['doc_kind'] == 'body' else f"附件{doc['sort_no']}"
-        name = doc.get('file') or doc.get('original')   # 不传文件的正文（package 默认）没有
-        file_path = folder / name if name else None
-        cur = existing.get(key)
+
+    changes: List[str] = []
+    content_changed = False      # 文字、标题、分类、附件增减；只换文件（如不再上传正文 docx）不算
+
+    # ── 正文 → 版本 ──
+    body = next((d for d in docs if d['doc_kind'] == 'body'), None)
+    if body is None:
+        rp.rejected = '导入包里没有正文'
+        rp.steps = []
+        return rp
+    body_md = read_md(body)
+    body_fields = {'body_md': body_md, 'article_index': body.get('article_index'), 'text_chars': body['text_chars'],
+                   'text_tokens': body['text_tokens'], 'content_hash': body['content_hash']}
+    body_file = file_of(body)
+    if version is None:
+        rp.actions.append(f'新建版本 {rp.version_no}（草稿，含正文）')
+        rp.steps.append(('create_version', {'title': f'{rp.title} {rp.version_no}', 'version_no': rp.version_no,
+                                            'version_status': 'draft',
+                                            **({'effective_date': effective} if effective else {}),
+                                            'change_note': f'导入批次 {package.name}', **body_fields}, body_file))
+        content_changed = True
+    else:
+        same_file = version.get('content_hash') == body['content_hash'] and (body_file is not None or not version.get('original_file'))
+        same_text = (version.get('body_md') or None) == body_md
+        if not (same_file and same_text):
+            what = [w for w, ok in (('文件' if body_file else '去掉文件', same_file), ('正文', same_text)) if not ok]
+            changes.append('正文：更新' + '、'.join(what))
+            content_changed = content_changed or not same_text
+            fields = dict(body_fields)
+            if body_file is None and version.get('original_file'):
+                fields['original_file'] = None
+            rp.steps.append(('update_version', version['id'], fields, None if same_file else body_file))
+
+    # ── 附件 ──
+    existing: Dict[int, Dict] = {}
+    if version is not None:
+        for a in api.find('brightrule_policy_attachment', {'policy_version': version['id']}, ATTACHMENT_FIELDS):
+            existing[int(a.get('sort_no') or 0)] = a
+    seen = set()
+    for doc in docs:
+        if doc['doc_kind'] != 'attachment':
+            continue
+        no = int(doc['sort_no'])
+        seen.add(no)
+        md = read_md(doc)
+        label = doc.get('label') or f'附件{no}'
+        fields = {'title': doc['title'], 'label': label, 'attachment_class': doc.get('attachment_class'),
+                  'sort_no': no, 'body_md': md, 'has_text': doc['has_text'], 'text_chars': doc['text_chars'],
+                  'text_tokens': doc['text_tokens'], 'content_hash': doc['content_hash']}
+        file_path = file_of(doc)
+        cur = existing.get(no)
         if cur is None:
-            doc_changes.append(label + '：新建')
+            changes.append(label + '：新建')
             content_changed = True
-            rp.steps.append(('create_doc', fields, file_path))
+            rp.steps.append(('create_attachment', fields, file_path))
             continue
         same_file = cur.get('content_hash') == doc['content_hash'] and (file_path is not None or not cur.get('original_file'))
-        same_text = (cur.get('body_md_redacted') or None) == md
-        same_meta = cur.get('title') == doc['title'] and cur.get('attachment_class') == fields.get('attachment_class')
+        same_text = (cur.get('body_md') or None) == md
+        same_meta = (cur.get('title') == doc['title'] and cur.get('label') == label
+                     and cur.get('attachment_class') == fields['attachment_class'])
         if same_file and same_text and same_meta:
             continue
-        what = [w for w, ok in (('文件' if file_path else '去掉文件', same_file), ('脱敏正文', same_text),
+        what = [w for w, ok in (('文件' if file_path else '去掉文件', same_file), ('文字', same_text),
                                 ('标题或分类', same_meta)) if not ok]
-        doc_changes.append(f'{label}：更新' + '、'.join(what))
+        changes.append(f'{label}：更新' + '、'.join(what))
         content_changed = content_changed or not (same_text and same_meta)
         if file_path is None and cur.get('original_file'):
             fields['original_file'] = None
-        rp.steps.append(('update_doc', cur['id'], fields, None if same_file else file_path))
+        rp.steps.append(('update_attachment', cur['id'], fields, None if same_file else file_path))
     extra = [k for k in existing if k not in seen]
     if extra:
-        rp.notes.append('系统里还有导入包没有的文档：' + '、'.join('正文' if k[0] == 'body' else f'附件{k[1]}' for k in extra) + '（不删除）')
+        rp.notes.append('系统里还有导入包没有的附件：' + '、'.join(str(existing[k].get('label') or f'附件{k}') for k in extra) + '（不删除）')
     if is_current and (content_changed or extra):
-        rp.rejected = f'版本 {rp.version_no} 已是现行，内容有变化（{"；".join(doc_changes) or "文档增减"}）。请用新的版本号导入。'
+        rp.rejected = f'版本 {rp.version_no} 已是现行，内容有变化（{"；".join(changes) or "附件增减"}）。请用新的版本号导入。'
         rp.steps = []
         return rp
-    if doc_changes:
-        rp.actions += doc_changes
+    if changes:
+        rp.actions += changes
     elif version is not None:
-        rp.actions.append('版本文档全部一致，跳过')
+        rp.actions.append('正文和附件全部一致，跳过')
     return rp
 
 
 def apply_row(api: Api, rp: RowPlan) -> None:
     policy_id, version_id = rp.policy_id, rp.version_id
+
+    def with_file(fields: Dict, original: Optional[Path], title: str) -> Dict:
+        fields = dict(fields)
+        if original is not None:
+            fields['original_file'] = api.upload(Path(original).read_bytes(), f'{title}.docx')
+        return fields
+
     for step in rp.steps:
         kind = step[0]
         if kind == 'create_policy':
@@ -373,16 +418,15 @@ def apply_row(api: Api, rp: RowPlan) -> None:
             api.update('brightrule_policy', step[1], step[2])
             policy_id = step[1]
         elif kind == 'create_version':
-            version_id = api.create('brightrule_policy_version', {**step[1], 'policy': policy_id})['id']
-        elif kind in ('create_doc', 'update_doc'):
-            fields = dict(step[1] if kind == 'create_doc' else step[2])
-            original = step[2] if kind == 'create_doc' else step[3]
-            if original is not None:
-                fields['original_file'] = api.upload(Path(original).read_bytes(), f"{fields['title']}.docx")
-            if kind == 'create_doc':
-                api.create('brightrule_policy_document', {**fields, 'policy_version': version_id})
-            else:
-                api.update('brightrule_policy_document', step[1], fields)
+            fields = with_file(step[1], step[2], f"{step[1]['title']} 正文")
+            version_id = api.create('brightrule_policy_version', {**fields, 'policy': policy_id})['id']
+        elif kind == 'update_version':
+            api.update('brightrule_policy_version', step[1], with_file(step[2], step[3], f'{rp.title} {rp.version_no} 正文'))
+        elif kind == 'create_attachment':
+            fields = with_file(step[1], step[2], f"{step[1]['label']} {step[1]['title']}")
+            api.create('brightrule_policy_attachment', {**fields, 'policy_version': version_id})
+        elif kind == 'update_attachment':
+            api.update('brightrule_policy_attachment', step[1], with_file(step[2], step[3], f"{step[2]['label']} {step[2]['title']}"))
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -426,7 +470,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     todo = [p for p in plans if p.steps and not p.rejected]
     rej = [p for p in plans if p.rejected]
     print(f'{"已写入" if args.apply else "将写入"} {len(todo)} 份，无变化 {len(plans) - len(todo) - len(rej)} 份，拒绝 {len(rej)} 份。')
-    uploads = any(st[0] in ('create_doc', 'update_doc') for p in todo for st in p.steps)
+    uploads = any(len(st) > 2 and isinstance(st[-1], Path) for p in todo for st in p.steps)
     if not args.apply and todo:
         if uploads and api.mode == 'api_key':
             print('注意：要上传文件，而平台的文件上传不认 API Key。写入时请用 --login（输入账号密码）。')

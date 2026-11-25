@@ -372,6 +372,30 @@ class MarkdownTest(unittest.TestCase):
         self.assertEqual(md.count('第一章'), 1)
         self.assertIn('# 正文：示例办法', md)
 
+    def test_attachment_tables_split_and_keep_their_own_label(self):
+        import docx2md, package
+
+        def p(text):
+            return f'<w:p><w:r><w:t>{text}</w:t></w:r></w:p>'
+        tbl = '<w:tbl><w:tr><w:tc><w:p><w:r><w:t>姓名</w:t></w:r></w:p></w:tc><w:tc><w:p/></w:tc></w:tr></w:tbl>'
+        body = (p('第一条 正文，填写《申报表》（附表1）。') + p('附表：1.示例内训师申报表') + p('附表1：') + p('示例内训师申报表') + tbl
+                + p('附表 2：') + p('2.示例评价表') + tbl + '<w:sectPr/>')
+        parts = {'word/document.xml': f'<w:document {W}><w:body>{body}</w:body></w:document>'.encode()}
+        main, atts = docx2md.document_markdown(parts)
+        self.assertEqual([a.label for a, _md in atts], ['附表1', '附表2'])
+        self.assertNotIn('| 姓名 |', main)                      # 附表不再留在正文里
+        self.assertTrue(atts[0][1].startswith('# 附表1：示例内训师申报表\n'))
+        self.assertEqual(package.attachment_title('2.示例评价表'), '示例评价表')
+        self.assertEqual(package.attachment_title('（三）示例清单'), '示例清单')
+
+    def test_heading_style_articles_are_normalized(self):
+        import package
+        body = '## 第一章 总则\n\n### 第一条 目的\n\n为规范。\n\n**第二条** 范围\n\n全体员工。\n'
+        text = package.normalize_articles(body)
+        self.assertIn('**第一条** 目的', text)
+        self.assertNotIn('### 第一条', text)
+        self.assertEqual([e['article'] for e in package.article_index(text)], ['第一条', '第二条'])
+
     def test_attachments_split_from_body(self):
         import docx2md
 
@@ -681,7 +705,8 @@ class PackageTest(unittest.TestCase):
         att_md = (folder / '附件1.md').read_text(encoding='utf-8')
         self.assertEqual(att['content_hash'], hashlib.sha256(att_md.encode('utf-8')).hexdigest())
         self.assertEqual(att['attachment_class'], 'form')
-        self.assertEqual(att['title'], '差旅示例办法 附件1 出差申请单')
+        self.assertEqual(att['title'], '出差申请单')            # 附件自己的名称，不拼制度名
+        self.assertEqual(att['label'], '附件1')
         for f in pkg.rglob('*.docx'):
             self.assertNotIn('华东示例', docx_text(f), f)
         sheet = (pkg / '批次清单.csv').read_text(encoding='utf-8-sig')
@@ -776,9 +801,17 @@ class PackageTest(unittest.TestCase):
         rp = importer.plan_row(api, pkg, row, api.category_options())
         self.assertIsNone(rp.rejected)
         importer.apply_row(api, rp)
-        self.assertEqual(len(api.rows['brightrule_policy_document']), 2)
-        body_doc, att_doc = sorted(api.rows['brightrule_policy_document'], key=lambda d: d['sort_no'])
-        self.assertNotIn('original_file', body_doc)        # 默认只进 Markdown，不传文件
+        # 正文写在版本上，附件进附件表；不再有「版本文档」
+        self.assertNotIn('brightrule_policy_document', api.rows)
+        version = api.rows['brightrule_policy_version'][0]
+        self.assertIn('**第一条**', version['body_md'])
+        self.assertEqual([e['article'] for e in version['article_index']], ['第一条', '第二条', '第四条', '第五条'])
+        self.assertEqual(version['version_status'], 'draft')
+        [att_doc] = api.rows['brightrule_policy_attachment']
+        self.assertEqual((att_doc['label'], att_doc['title'], att_doc['attachment_class'], att_doc['sort_no']),
+                         ('附件1', '出差申请单', 'form', 1))
+        self.assertEqual(att_doc['policy_version'], version['id'])
+        self.assertNotIn('original_file', version)          # 默认只进 Markdown，不传文件
         self.assertNotIn('original_file', att_doc)
         self.assertEqual(api.files, {})
         self.assertEqual(api.rows['brightrule_policy'][0]['category'], 'finance')
@@ -791,13 +824,13 @@ class PackageTest(unittest.TestCase):
         self.assertIn('图片', importer.plan_row(api, pkg, row, []).rejected)
         md_path.write_text(saved, encoding='utf-8')
         # 早先正文也传了文件：换成默认打包后再导入，去掉正文文件；现行版本也可以（文字没变）
-        body_doc['original_file'], body_doc['content_hash'] = 'old-file', 'old-hash'
-        api.rows['brightrule_policy_version'][0]['version_status'] = 'current'
+        version['original_file'], version['content_hash'] = 'old-file', 'old-hash'
+        version['version_status'] = 'current'
         rp = importer.plan_row(api, pkg, row, [])
         self.assertIsNone(rp.rejected)
         self.assertIn('去掉文件', ' '.join(rp.actions))
         importer.apply_row(api, rp)
-        self.assertIsNone(body_doc['original_file'])
+        self.assertIsNone(version['original_file'])
         self.assertEqual(importer.plan_row(api, pkg, row, []).steps, [])
         # 设为现行后，内容变了就拒绝
         api.rows['brightrule_policy_version'][0]['version_status'] = 'current'

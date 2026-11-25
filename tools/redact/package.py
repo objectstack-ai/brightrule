@@ -2,7 +2,8 @@
 """打包：把一次脱敏的结果整理成导入包，交给 import.py 写进系统（brightrule#11）。
 
 用法：
-    python3 package.py --run 脱敏结果/<时间> [--output 导入包]                      # 默认：正文只进 Markdown，附件另带脱敏后的 docx
+    python3 package.py --run 脱敏结果/<时间> [--output 导入包]                      # 默认：正文、附件都只进 Markdown
+    python3 package.py --run 脱敏结果/<时间> --files attachments                     # 附件另带脱敏后的 docx
     python3 package.py --run 脱敏结果/<时间> --files redacted                        # 正文也带脱敏后的 docx
     python3 package.py --run 脱敏结果/<时间> --originals 原件目录 --files original   # 上传原件
 
@@ -13,10 +14,11 @@
 写 <output>/<时间>/：
     批次清单.csv     每份制度一行：制度编号、名称、版本号、生效日期……人工核对后导入以它为准
     检查报告.md      条号缺漏、重复、「之一」，附件分类，取不到的字段，被拒绝的文件
-    <每份制度>/       manifest.json、正文.md、附件N.md、附件N.docx（--files redacted / original 时还有 正文.docx）
+    <每份制度>/       manifest.json、正文.md、附件N.md（按 --files 还有 附件N.docx、正文.docx）
 
 --files 决定哪些文件上传到系统的「原件」字段：
-    attachments（默认）  正文只进脱敏 Markdown，不传文件；附件（附表、表单）传脱敏后的 docx，员工可下载填写；
+    none（默认）         都不传文件，正文、附件只进脱敏 Markdown；只有图片、没有文字的附件不导入（报告里列出）；
+    attachments          正文不传文件；附件（附表、表单）传脱敏后的 docx，员工可下载填写；
     redacted             正文、附件都传脱敏后的 docx；
     original             都传原件：导入包含原文，和「内部留存-勿外发」一样不能外发、不能进 Git。
 
@@ -24,7 +26,8 @@
 - 字数 = 脱敏正文的 Unicode 码点数（含 Markdown 标记）；token = ⌈字数 ÷ 1.5⌉；
 - 条号索引每条 {article, chapter, redacted: [起, 止)}，偏移按码点计，起点在 **第X条** 标记处，
   终点在下一条或下一个标题之前，不含末尾空行；没有章时 chapter 为 null；
-- 内容哈希 = 上传的那个文件字节的 SHA-256（十六进制小写）；不传文件的正文取脱敏 Markdown（UTF-8）的 SHA-256。
+- 内容哈希 = 上传的那个文件字节的 SHA-256（十六进制小写）；不传文件的取脱敏 Markdown（UTF-8）的 SHA-256。
+- 图片、图表、SmartArt、公式、嵌入对象的内容不在 Markdown 里（只留标记），按份统计写进批次清单「问题」一栏和检查报告。
 """
 from __future__ import annotations
 
@@ -43,7 +46,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from docx2md import DOC_NO_RX, attachment_docx, document_markdown, split_document, _parse  # noqa: E402
+from docx2md import DOC_NO_RX, NON_TEXT_MARKERS, attachment_docx, document_markdown, split_document, _parse  # noqa: E402
 
 CHARS_PER_TOKEN = 1.5
 ARTICLE = re.compile(r'^\*\*(第[零〇一二三四五六七八九十百千0-9]+条(?:之[一二三四五六七八九十]+)?)\*\*', re.M)
@@ -245,9 +248,17 @@ def metadata(md: str, stem: str = '') -> Tuple[Dict[str, str], List[str]]:
 
 
 # ── 附件 ──────────────────────────────────────────────────────────────────
+def non_text_counts(md: str) -> Dict[str, int]:
+    """Markdown 里没转成文字的内容（图片、图表……）各有几处。"""
+    return {name: md.count(mark) for mark, name in NON_TEXT_MARKERS.items() if mark in md}
+
+
 def attachment_class(md: str) -> str:
-    """表格里空格子占 40% 以上 → 表单（「项目｜空格」成对排列的表正好一半空）；没有文字 → 仅原件；其余 → 规范性。"""
+    """表格里空格子占 40% 以上 → 表单（「项目｜空格」成对排列的表正好一半空）；没有文字（只有图片等）→ 仅原件；
+    其余 → 规范性。"""
     body = '\n'.join(l for l in md.splitlines() if not l.startswith('# '))
+    for mark in NON_TEXT_MARKERS:
+        body = body.replace(mark, '')
     if not re.search(r'[\w一-鿿]', body):
         return 'original'
     cells = [c.strip() for l in body.splitlines() if l.startswith('|') and not set(l) <= set('|-: ')
@@ -270,13 +281,14 @@ class Packed:
     problems: List[str] = field(default_factory=list)
     body_tokens: int = 0
     attachments: List[Dict[str, object]] = field(default_factory=list)
+    images: Dict[str, int] = field(default_factory=dict)   # 图片、图表……各几处（内容不在 Markdown 里）
     rejected: Optional[str] = None
 
 
 def pack_one(entry: Dict[str, object], docs: Path, originals: Optional[Path], out_root: Path,
              meta_from: str, files: str) -> Packed:
-    """files = 'attachments'：正文不传文件，附件传脱敏后的 docx；'redacted'：正文、附件都传脱敏后的 docx；
-    'original'：都传原件。"""
+    """files = 'none'：都不传文件；'attachments'：正文不传文件，附件传脱敏后的 docx；
+    'redacted'：正文、附件都传脱敏后的 docx；'original'：都传原件。"""
     source = str(entry['source'])
     output = str(entry.get('output') or '')
     packed = Packed(folder=str(Path(output).with_suffix('')) if output else '', source=source)
@@ -311,7 +323,7 @@ def pack_one(entry: Dict[str, object], docs: Path, originals: Optional[Path], ou
     folder = out_root / packed.folder
     folder.mkdir(parents=True, exist_ok=True)
     (folder / '正文.md').write_text(body, encoding='utf-8')
-    if files == 'attachments':
+    if files in ('none', 'attachments'):
         body_file, body_hash = None, sha256(body.encode('utf-8'))
     else:
         body_bytes = (originals / source).read_bytes() if files == 'original' else red_docx.read_bytes()
@@ -342,8 +354,18 @@ def pack_one(entry: Dict[str, object], docs: Path, originals: Optional[Path], ou
                                    '：可能写法不同没拆出来（留在了正文里），请对照原件')
     if parts and set(red_md_by_no) != set(orig_by_no):
         packed.problems.append(f'附件对不上：脱敏件 {sorted(red_md_by_no)}，原件 {sorted(orig_by_no)}')
+    images = non_text_counts(body)
     for no in sorted(red_md_by_no):
-        if files == 'original':
+        md = red_md_by_no[no].read_text(encoding='utf-8')
+        for k, v in non_text_counts(md).items():
+            images[k] = images.get(k, 0) + v
+        cls = attachment_class(md)
+        if files == 'none':
+            if cls == 'original':
+                packed.problems.append(f'附件{no} 只有图片等、没有文字：不导入，需要时请把内容写成文字')
+                continue
+            data = None
+        elif files == 'original':
             if no not in orig_by_no:
                 continue
             data = attachment_docx(parts, orig_by_no[no])
@@ -352,10 +374,9 @@ def pack_one(entry: Dict[str, object], docs: Path, originals: Optional[Path], ou
                 packed.problems.append(f'附件{no} 没有脱敏后的 .docx')
                 continue
             data = red_docx_by_no[no].read_bytes()
-        md = red_md_by_no[no].read_text(encoding='utf-8')
         (folder / f'附件{no}.md').write_text(md, encoding='utf-8')
-        (folder / f'附件{no}.docx').write_bytes(data)
-        cls = attachment_class(md)
+        if data is not None:
+            (folder / f'附件{no}.docx').write_bytes(data)
         if meta_from == 'original' and no in orig_by_no:
             a_title = orig_by_no[no].title
         else:
@@ -363,11 +384,16 @@ def pack_one(entry: Dict[str, object], docs: Path, originals: Optional[Path], ou
             a_title = first.split('：', 1)[1].strip() if '：' in first else ''
         att = {'doc_kind': 'attachment', 'sort_no': no, 'attachment_class': cls,
                'title': f"{meta.get('title') or red_docx.stem} 附件{no}" + (f' {a_title}' if a_title else ''),
-               'md': f'附件{no}.md' if cls != 'original' else None, 'file': f'附件{no}.docx',
-               'article_index': None, 'content_hash': sha256(data),
+               'md': f'附件{no}.md' if cls != 'original' else None,
+               'file': f'附件{no}.docx' if data is not None else None,
+               'article_index': None, 'content_hash': sha256(data if data is not None else md.encode('utf-8')),
                **(text_stats(md) if cls != 'original' else text_stats(''))}
         documents.append(att)
         packed.attachments.append({'no': no, 'title': a_title, 'class': cls, 'tokens': att['text_tokens']})
+    if images:
+        packed.problems.append('含' + '、'.join(f'{k} {v} 处' for k, v in images.items()) +
+                               '：这些内容不在 Markdown 里，问询时模型看不到；重要的请对照原件写成文字')
+    packed.images = images
     manifest = {'source': source if files == 'original' else None, 'redacted': output, 'files': files,
                 'meta_from': meta_from, 'meta': meta, 'documents': documents,
                 'packaged_at': _dt.datetime.now().isoformat(timespec='seconds')}
@@ -375,7 +401,8 @@ def pack_one(entry: Dict[str, object], docs: Path, originals: Optional[Path], ou
     return packed
 
 
-FILES_LABEL = {'attachments': '正文不传文件（只进脱敏 Markdown），附件传脱敏后的 docx',
+FILES_LABEL = {'none': '不传文件，正文、附件只进脱敏 Markdown',
+               'attachments': '正文不传文件（只进脱敏 Markdown），附件传脱敏后的 docx',
                'redacted': '正文、附件都传脱敏后的 docx（不含原文）', 'original': '原件'}
 CLASS_LABEL = {'normative': '规范性', 'form': '表单', 'original': '仅原件'}
 SHEET_COLUMNS = ['导入', '包内目录', '制度编号', '制度名称', '版本号', '生效日期', '发文日期', '制度类别', '制度层级',
@@ -387,8 +414,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument('--run', required=True, type=Path, help='一次脱敏的结果目录：脱敏结果/<时间>')
     ap.add_argument('--originals', type=Path,
                     help='原件目录（脱敏时的 --input）。只在 --files original 或 --meta original 时需要')
-    ap.add_argument('--files', choices=('attachments', 'redacted', 'original'), default='attachments',
-                    help='上传到系统的文件：attachments（默认）正文只进 Markdown、附件传脱敏后的 docx；'
+    ap.add_argument('--files', choices=('none', 'attachments', 'redacted', 'original'), default='none',
+                    help='上传到系统的文件：none（默认）都不传，只进 Markdown；attachments 附件传脱敏后的 docx；'
                          'redacted 正文、附件都传脱敏后的 docx；original 都传原件')
     ap.add_argument('--output', type=Path, default=Path('导入包'), help='导入包根目录，默认 ./导入包')
     ap.add_argument('--meta', choices=('original', 'redacted'),
@@ -427,6 +454,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                          '；'.join(issues)])
     write_report(out_root / '检查报告.md', packed, args)
     print(f'打包 {len(ok)} 份制度，拒绝 {len(packed) - len(ok)} 份；附件 {sum(len(p.attachments) for p in ok)} 个。')
+    with_images = [p for p in ok if p.images]
+    if with_images:
+        total = {}
+        for p in with_images:
+            for k, v in p.images.items():
+                total[k] = total.get(k, 0) + v
+        print(f'{len(with_images)} 份含图片等非文字内容（' + '、'.join(f'{k} {v} 处' for k, v in total.items()) +
+              '）：这些内容不进系统，见检查报告「含图片等非文字内容」。')
     need = [p for p in ok if p.missing or p.problems]
     if need:
         print(f'{len(need)} 份需要人工确认（缺字段、缺条、条号重复等），见检查报告。')
@@ -452,6 +487,13 @@ def write_report(path: Path, packed: List[Packed], args) -> None:
     rej = [p for p in packed if p.rejected]
     if rej:
         lines += ['## 拒绝打包', ''] + [f'- {p.folder or p.source}：{p.rejected}' for p in rej] + ['']
+    imgs = sorted((p for p in ok if p.images), key=lambda p: -sum(p.images.values()))
+    if imgs:
+        lines += ['## 含图片等非文字内容', '',
+                  '下面这些制度里有图片、图表、SmartArt、公式或嵌入对象。它们的内容不在 Markdown 里（原位置只留「（图片）」等标记），'
+                  '问询时模型看不到。流程图、扫描的表格、带数字的图表等重要内容，请对照原件写成文字。', '',
+                  '| 制度 | 非文字内容 |', '|---|---|']
+        lines += [f'| {p.folder} | ' + '、'.join(f'{k} {v} 处' for k, v in p.images.items()) + ' |' for p in imgs] + ['']
     for p in ok:
         flag = '⚠ 需确认' if (p.missing or p.problems) else '✓'
         lines += [f'## {p.folder} — {flag}', '',

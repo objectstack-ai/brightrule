@@ -5,7 +5,9 @@
 - Word 自动编号（如「第一条」「（一）」「1.」）按编号定义算出文字，写进正文。
 - 标题样式 → `#`；「第X章」→ `##`，「第X节」→ `###`；「第X条」加粗条号，便于后续逐条拆分。
 - 表格 → Markdown 表格（合并单元格展开为空格子）；文本框里的文字单独成段。
-- 脚注放在文末；图片写成「（图片）」；页眉页脚不输出。
+- 脚注放在文末；页眉页脚不输出；
+- 图片、图表、SmartArt、公式、嵌入对象的内容不进 Markdown，原位置写成「（图片）」「（图表）」「（SmartArt 图形）」
+  「（公式）」「（嵌入对象）」，打包时按这些标记统计并提示（见 NON_TEXT_MARKERS）。
 - 新版 Word 为兼容旧版会把文本框、形状再存一份（mc:Fallback），只读第一份，不重复。
 - 目录（Word 自动目录或手写的「目录 + 标题页码」）整体去掉，不进 Markdown。
 
@@ -26,6 +28,12 @@ W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
 MC = 'http://schemas.openxmlformats.org/markup-compatibility/2006'
 A = 'http://schemas.openxmlformats.org/drawingml/2006/main'
 V = 'urn:schemas-microsoft-com:vml'
+CHART = 'http://schemas.openxmlformats.org/drawingml/2006/chart'
+DGM = 'http://schemas.openxmlformats.org/drawingml/2006/diagram'
+MATH = 'http://schemas.openxmlformats.org/officeDocument/2006/math'
+# 内容没有转成文字的元素：标记 → 名称（打包、统计时按它数）
+NON_TEXT_MARKERS = {'（图片）': '图片', '（图表）': '图表', '（SmartArt 图形）': 'SmartArt 图形',
+                    '（公式）': '公式', '（嵌入对象）': '嵌入对象'}
 
 
 def w(tag: str) -> str:
@@ -287,6 +295,14 @@ class Converter:
                 out.append(f'[^{nid}]')
             elif tag in (f'{{{A}}}blip', f'{{{V}}}imagedata'):
                 out.append('（图片）')
+            elif tag == f'{{{CHART}}}chart':
+                out.append('（图表）')
+            elif tag == f'{{{DGM}}}relIds':
+                out.append('（SmartArt 图形）')
+            elif tag in (f'{{{MATH}}}oMath', f'{{{MATH}}}oMathPara'):
+                out.append('（公式）')   # 公式里的文字不在 w:t 里，脱敏没有处理，不输出
+            elif tag == w('object'):
+                out.append('（嵌入对象）')   # OLE 对象（嵌入的 Excel、Visio 等）；其预览图不再另记「（图片）」
             elif tag == f'{{{V}}}textpath' and ch.get('string'):
                 out.append(ch.get('string'))  # 艺术字
             else:

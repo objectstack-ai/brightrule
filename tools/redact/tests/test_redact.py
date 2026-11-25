@@ -598,7 +598,15 @@ class ScanTest(unittest.TestCase):
             shutil.rmtree(tmp)
 
 
-def _policy_docx(path: Path, fee: str = '100') -> None:
+NS_EXTRA = ('xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+            'xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" '
+            'xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"')
+IMAGE_P = '<w:p><w:r><w:drawing><a:graphic><a:graphicData><a:blip r:embed="rId9"/></a:graphicData></a:graphic></w:drawing></w:r></w:p>'
+CHART_P = '<w:p><w:r><w:drawing><a:graphic><a:graphicData><c:chart r:id="rId8"/></a:graphicData></a:graphic></w:drawing></w:r></w:p>'
+MATH_P = '<w:p><m:oMath><m:r><m:t>A=B×C</m:t></m:r></m:oMath></w:p>'
+
+
+def _policy_docx(path: Path, fee: str = '100', with_images: bool = False) -> None:
     """合成的一份制度：发文通知、制度信息表、两章、缺第三条、一个表单附件、版记。名称全部虚构。"""
     def p(t, brk=False):
         ppr = '<w:pPr><w:pageBreakBefore/></w:pPr>' if brk else ''
@@ -612,10 +620,12 @@ def _policy_docx(path: Path, fee: str = '100') -> None:
                    ['责任部门', '财务部', '制度类别', '财务类']])
             + p('差旅示例办法') + p('第一章　总则') + p('第一条　为规范差旅，制定本办法。') + p('第二条　适用于全体员工。')
             + p('第二章　标准') + p(f'第四条　伙食补助每人每天{fee}元。') + p('第五条　本办法自2025年3月1日起施行。')
+            + (IMAGE_P + CHART_P + MATH_P if with_images else '')
             + p('附件：出差申请单') + p('附件1', True) + p('出差申请单') + tbl([['出差人', '', '部门', ''], ['事由', '', '审批', '']])
+            + (p('附件2', True) + p('审批流程图') + IMAGE_P if with_images else '')
             + p('华东示例集团综合办公室　2025年3月1日印发'))
     parts = dict(PARTS)
-    parts['word/document.xml'] = f'<w:document {W}><w:body>{body}<w:sectPr/></w:body></w:document>'
+    parts['word/document.xml'] = f'<w:document {W} {NS_EXTRA}><w:body>{body}<w:sectPr/></w:body></w:document>'
     parts.pop('word/comments.xml')
     path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(path, 'w') as z:
@@ -663,12 +673,13 @@ class PackageTest(unittest.TestCase):
         self.assertEqual(first['chapter'], '第一章　总则')
         self.assertEqual(body['text_chars'], len(text))
         self.assertEqual(body['text_tokens'], -(-len(text) * 2 // 3))
-        # 默认：正文不传文件（哈希按脱敏 Markdown 算），附件传脱敏后的 docx；导入包里没有原文
+        # 默认：正文、附件都不传文件，只进脱敏 Markdown（哈希按 Markdown 算）；导入包里没有 docx
         self.assertIsNone(body['file'])
-        self.assertFalse((folder / '正文.docx').exists())
+        self.assertIsNone(att['file'])
+        self.assertEqual(list(folder.glob('*.docx')), [])
         self.assertEqual(body['content_hash'], hashlib.sha256(text.encode('utf-8')).hexdigest())
-        self.assertEqual(att['file'], '附件1.docx')
-        self.assertEqual(att['content_hash'], hashlib.sha256((folder / '附件1.docx').read_bytes()).hexdigest())
+        att_md = (folder / '附件1.md').read_text(encoding='utf-8')
+        self.assertEqual(att['content_hash'], hashlib.sha256(att_md.encode('utf-8')).hexdigest())
         self.assertEqual(att['attachment_class'], 'form')
         self.assertEqual(att['title'], '差旅示例办法 附件1 出差申请单')
         for f in pkg.rglob('*.docx'):
@@ -679,6 +690,32 @@ class PackageTest(unittest.TestCase):
         pkg2 = self.redact_and_pack()
         m2 = json.loads((pkg2 / '财务' / '差旅示例办法' / 'manifest.json').read_text(encoding='utf-8'))
         self.assertEqual([d['content_hash'] for d in m2['documents']], [d['content_hash'] for d in m['documents']])
+
+    def test_package_attachments_mode_uploads_attachment_docx_only(self):
+        import json
+        pkg = self.redact_and_pack('--files', 'attachments')
+        folder = pkg / '财务' / '差旅示例办法'
+        body, att = json.loads((folder / 'manifest.json').read_text(encoding='utf-8'))['documents']
+        self.assertIsNone(body['file'])
+        self.assertEqual(att['file'], '附件1.docx')
+        self.assertEqual(att['content_hash'], hashlib.sha256((folder / '附件1.docx').read_bytes()).hexdigest())
+
+    def test_images_charts_and_formulas_are_marked_and_reported(self):
+        import json
+        _policy_docx(self.src / '财务' / '差旅示例办法.docx', with_images=True)
+        pkg = self.redact_and_pack()
+        folder = pkg / '财务' / '差旅示例办法'
+        text = (folder / '正文.md').read_text(encoding='utf-8')
+        for mark in ('（图片）', '（图表）', '（公式）'):
+            self.assertIn(mark, text)
+        self.assertNotIn('A=B', text)   # 公式里的文字没有经过脱敏，不输出
+        docs = json.loads((folder / 'manifest.json').read_text(encoding='utf-8'))['documents']
+        self.assertEqual([d['sort_no'] for d in docs], [0, 1])   # 只有图片的附件2 不导入
+        sheet = (pkg / '批次清单.csv').read_text(encoding='utf-8-sig')
+        self.assertIn('含图片 2 处、图表 1 处、公式 1 处', sheet)
+        self.assertIn('附件2 只有图片', sheet)
+        report = (pkg / '检查报告.md').read_text(encoding='utf-8')
+        self.assertIn('## 含图片等非文字内容', report)
 
     def test_package_can_upload_redacted_body_docx(self):
         import json
@@ -741,11 +778,18 @@ class PackageTest(unittest.TestCase):
         importer.apply_row(api, rp)
         self.assertEqual(len(api.rows['brightrule_policy_document']), 2)
         body_doc, att_doc = sorted(api.rows['brightrule_policy_document'], key=lambda d: d['sort_no'])
-        self.assertNotIn('original_file', body_doc)        # 正文只进 Markdown
-        self.assertIn(att_doc['original_file'], api.files)  # 附件带脱敏后的 docx
+        self.assertNotIn('original_file', body_doc)        # 默认只进 Markdown，不传文件
+        self.assertNotIn('original_file', att_doc)
+        self.assertEqual(api.files, {})
         self.assertEqual(api.rows['brightrule_policy'][0]['category'], 'finance')
         # 再来一次：无事可做
         self.assertEqual(importer.plan_row(api, pkg, row, []).steps, [])
+        # Markdown 里有图片语法：拒绝整行
+        md_path = pkg / row['包内目录'] / '正文.md'
+        saved = md_path.read_text(encoding='utf-8')
+        md_path.write_text(saved + '\n![流程](data:image/png;base64,AAAA)\n', encoding='utf-8')
+        self.assertIn('图片', importer.plan_row(api, pkg, row, []).rejected)
+        md_path.write_text(saved, encoding='utf-8')
         # 早先正文也传了文件：换成默认打包后再导入，去掉正文文件；现行版本也可以（文字没变）
         body_doc['original_file'], body_doc['content_hash'] = 'old-file', 'old-hash'
         api.rows['brightrule_policy_version'][0]['version_status'] = 'current'

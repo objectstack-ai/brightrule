@@ -31,7 +31,7 @@ export const PolicyVersion = ObjectSchema.create({
   icon: 'git-branch',
   nameField: 'title',
   description:
-    '制度的每一个版本及其正文：版本号、版本状态（current = 现行）、生效日期、正文全文 body_md（Markdown，已脱敏）。附件在子表 brightrule_policy_attachment',
+    '制度的每一个版本及其正文',
 
   // Quick search matches the title only: the body is long, and a type-default
   // search would scan it on every keystroke.

@@ -20,7 +20,7 @@ export const Policy = ObjectSchema.create({
   icon: 'book-open',
   nameField: 'title',
   description:
-    '制度目录（每份制度一行，不含正文）。正文在现行版本上：current_version 指向现行的 brightrule_policy_version 记录，读它的 body_md。员工可问的只有 status = published 的制度',
+    '每份制度一行，正文在制度版本里',
 
   fieldGroups: [
     { key: 'basic', label: '基本信息' },

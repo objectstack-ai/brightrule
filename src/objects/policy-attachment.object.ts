@@ -32,7 +32,7 @@ export const PolicyAttachment = ObjectSchema.create({
   icon: 'paperclip',
   nameField: 'title',
   description:
-    '制度版本的附件（附件1、附表2…）。规范性附件（attachment_class = normative）与正文同等效力，全文在 body_md；表单、仅原件的附件不作答复依据。正文不在这里，在版本的 body_md',
+    '制度版本的附件，规范性附件与正文同等效力',
 
   // Quick search matches the title only: an attachment's text can be long.
   searchableFields: ['title'],

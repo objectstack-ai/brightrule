@@ -175,7 +175,22 @@ def info_table(text: str) -> Dict[str, str]:
     return pairs
 
 
-def metadata(md: str) -> Tuple[Dict[str, str], List[str]]:
+NOTICE_TITLE = re.compile(r'关于(?:印发|下发|颁布|发布|修订|修改)?\s*《(.+)》\s*的?(?:通知|决定)')
+BRACKET_TITLE = re.compile(r'《([^《》]+)》')
+FROM_ISSUE = re.compile(r'自\s*(?:印发|发布|下发|颁布|公布)\s*之日\s*起\s*(?:施行|实行|执行|生效)')
+
+
+def title_from_text(text: str) -> str:
+    """「关于印发《××》的通知」→ ××（书名号里再套书名号时取最外层）。"""
+    m = NOTICE_TITLE.search(text)
+    if m:
+        return m.group(1).strip()
+    m = BRACKET_TITLE.search(text)
+    return m.group(1).strip() if m else ''
+
+
+def metadata(md: str, stem: str = '') -> Tuple[Dict[str, str], List[str]]:
+    """元数据。制度信息表优先；取不到时用备用来源，并把备用来源记进 meta['_from']，提醒人工核对。"""
     sec = sections(md)
     table = info_table(sec.get('制度信息', ''))
     meta: Dict[str, str] = {}
@@ -184,11 +199,23 @@ def metadata(md: str) -> Tuple[Dict[str, str], List[str]]:
             if table.get(n):
                 meta[key] = table[n]
                 break
+    fallbacks: List[str] = []
     if not meta.get('title') and sec.get('正文标题'):
         meta['title'] = sec['正文标题']
-    notice = sec.get('发文通知', '') or sec.get('文件开头', '')
+    head = '\n'.join(md.splitlines()[:40])
+    notice = sec.get('发文通知', '') or sec.get('文件开头', '') or head
+    if not meta.get('title'):
+        t = title_from_text(notice) or title_from_text(stem)
+        if t:
+            meta['title'] = t
+            fallbacks.append('制度名称取自通知标题或文件名')
     m = DOC_NO_RX.search(notice)
     meta['version_no'] = re.sub(r'\s', '', m.group(0)) if m else ''
+    if not meta['version_no']:
+        m = DOC_NO_RX.search(stem)
+        if m:
+            meta['version_no'] = re.sub(r'\s', '', m.group(0))
+            fallbacks.append('版本号（文号）取自文件名')
     colophon = sec.get('版记', '')
     dates = DATE_CN.findall(colophon) or DATE_CN.findall(notice)
     if dates:
@@ -204,6 +231,11 @@ def metadata(md: str) -> Tuple[Dict[str, str], List[str]]:
         e = EFFECTIVE.search(sec.get('正文', md))
         if e:
             meta['effective_date'] = date_iso(e.group(1))
+        elif FROM_ISSUE.search(md) and meta.get('issued_date'):
+            meta['effective_date'] = meta['issued_date']
+            fallbacks.append('「自印发之日起施行」，生效日期取发文日期')
+    if fallbacks:
+        meta['_from'] = '；'.join(fallbacks)
     missing = [label for key, label in (('policy_no', '制度编号'), ('title', '制度名称'), ('version_no', '版本号（文号）'),
                                         ('effective_date', '生效日期')) if not meta.get(key)]
     return meta, missing
@@ -263,8 +295,10 @@ def pack_one(entry: Dict[str, object], docs: Path, originals: Optional[Path], ou
     red_main = red_md.read_text(encoding='utf-8')
     body = ATTACH_LISTING.sub('\n', red_main).rstrip('\n') + '\n'
 
-    meta, missing = metadata(document_markdown(parts)[0] if meta_from == 'original' and parts else red_main)
+    meta, missing = metadata(document_markdown(parts)[0] if meta_from == 'original' and parts else red_main, red_docx.stem)
     packed.meta, packed.missing = meta, missing
+    if meta.get('_from'):
+        packed.problems.append('请核对：' + meta.pop('_from'))
     index = article_index(body)
     packed.problems = article_problems(index)
     if not index:
@@ -293,6 +327,11 @@ def pack_one(entry: Dict[str, object], docs: Path, originals: Optional[Path], ou
             elif m and f.suffix == '.docx':
                 red_docx_by_no[int(m.group(1))] = f
     orig_by_no = {a.number: a for a in split_document(_parse(parts['word/document.xml']))[1]} if parts else {}
+    if red_md_by_no:
+        gaps = [n for n in range(1, max(red_md_by_no) + 1) if n not in red_md_by_no]
+        if gaps:
+            packed.problems.append('附件编号不连续，缺 ' + '、'.join(f'附件{n}' for n in gaps) +
+                                   '：可能写法不同没拆出来（留在了正文里），请对照原件')
     if parts and set(red_md_by_no) != set(orig_by_no):
         packed.problems.append(f'附件对不上：脱敏件 {sorted(red_md_by_no)}，原件 {sorted(orig_by_no)}')
     for no in sorted(red_md_by_no):

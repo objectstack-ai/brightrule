@@ -755,6 +755,17 @@ class PackageTest(unittest.TestCase):
             importer.main(['--package', str(run / '脱敏文件'), '--url', 'http://test'])
         self.assertIn('先运行 ./run.sh package', str(e.exception))
 
+    def test_metadata_fallbacks_for_files_without_an_info_table(self):
+        import package
+        md = ('# 发文通知\n\n关于印发《示例档案管理办法》的通知\n\n各部门：现印发。\n\n示例办公室\n\n2023年5月6日\n\n'
+              '# 正文\n\n**第一条** 为规范档案管理。\n\n**第二条** 本办法自印发之日起施行。\n')
+        meta, missing = package.metadata(md, '示办〔2023〕24号 关于印发《示例档案管理办法》的通知')
+        self.assertEqual(meta['title'], '示例档案管理办法')
+        self.assertEqual(meta['version_no'], '示办〔2023〕24号')
+        self.assertEqual(meta['effective_date'], '2023-05-06')
+        self.assertEqual(missing, ['制度编号'])
+        self.assertIn('文件名', meta['_from'])
+
     def test_import_refuses_internal_folder(self):
         import importer
         with self.assertRaises(SystemExit):

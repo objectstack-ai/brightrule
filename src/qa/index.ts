@@ -6,7 +6,7 @@ import { ANSWER_QUESTION_FUNCTION, answerQuestion, QuestionAnswerHook } from './
 import { PolicyRelationHook } from './policy-relation.hook.js';
 import { QuestionGuardHook } from './question-guard.hook.js';
 import { QuestionScopeHook } from './question-scope.hook.js';
-import { ClauseCurrentHook, PolicyDocumentHook, VersionCurrentHook } from './version-current.hook.js';
+import { ClauseCurrentHook, PolicyAttachmentHook, VersionCurrentHook } from './version-current.hook.js';
 import { KnowledgeVectorPlugin } from './vector/plugin.js';
 
 /**
@@ -29,7 +29,7 @@ export function policyQaPlugins(): unknown[] {
 /**
  * Lifecycle hooks: strip a person's forged answer, check the question's scope,
  * then answer it on save (the order is each hook's declared `priority`, not
- * this list's); keep clause and document currency in step with versions; keep
+ * this list's); keep clause and attachment currency in step with versions; keep
  * policy relations consistent with their version.
  */
 export const policyQaHooks = [
@@ -38,7 +38,7 @@ export const policyQaHooks = [
   QuestionAnswerHook,
   VersionCurrentHook,
   ClauseCurrentHook,
-  PolicyDocumentHook,
+  PolicyAttachmentHook,
   PolicyRelationHook,
 ];
 

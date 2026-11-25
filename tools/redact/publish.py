@@ -6,10 +6,10 @@
     python3 publish.py --package 导入包/<时间> --url https://<系统地址> --login --apply    # 写入
 
 按批次清单里「导入 = 是」的行（不想发布的行，把「导入」改成「否」，或在系统里单独处理），找到导入时建的版本：
-    - 草稿 → 设为现行。系统随之把这个版本的文档设为现行、把同一制度原来的现行版本改为已失效、
-      草稿制度改为已发布；员工从此能看到、问到；
+    - 草稿 → 设为现行。系统随之把这个版本的附件设为现行、把同一制度原来的现行版本改为已失效、
+      制度的「现行版本」指向它、草稿制度改为已发布；员工从此能看到、问到；
     - 已是现行 → 跳过；已失效 → 不动（不会把旧版本重新设为现行）；
-    - 系统里的文档比导入包少（导入没做完）→ 拒绝，先重跑 import。
+    - 版本上没有正文，或系统里的附件比导入包少（导入没做完）→ 拒绝，先重跑 import。
 """
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ def plan(api: Api, package: Path, row: Dict[str, str]) -> Tuple[str, str, Option
         return '✗', f'系统里有 {len(found)} 份制度{key}，请先处理重复', None
     policy = found[0]
     vs = api.find('brightrule_policy_version', {'policy': policy['id'], 'version_no': row.get('版本号', '')},
-                  'id,version_no,version_status')
+                  'id,version_no,version_status,text_chars')
     if not vs:
         return '✗', f'系统里找不到版本 {row.get("版本号")}：先运行 import', None
     version = vs[0]
@@ -41,12 +41,15 @@ def plan(api: Api, package: Path, row: Dict[str, str]) -> Tuple[str, str, Option
     if status == 'superseded':
         return '·', '已失效（有更新的版本），不动', None
     try:
-        expected = len(json.loads((package / row.get('包内目录', '') / 'manifest.json').read_text(encoding='utf-8'))['documents'])
+        documents = json.loads((package / row.get('包内目录', '') / 'manifest.json').read_text(encoding='utf-8'))['documents']
     except (FileNotFoundError, KeyError, ValueError):
         return '✗', '导入包里没有 manifest.json', None
-    docs = api.find('brightrule_policy_document', {'policy_version': version['id']}, 'id,doc_kind')
-    if not any(d.get('doc_kind') == 'body' for d in docs) or len(docs) < expected:
-        return '✗', f'系统里只有 {len(docs)} 个文档，导入包有 {expected} 个：导入没做完，先重跑 import', None
+    expected = sum(1 for d in documents if d.get('doc_kind') == 'attachment')
+    if not version.get('text_chars'):
+        return '✗', '版本上还没有正文：导入没做完，先重跑 import', None
+    atts = api.find('brightrule_policy_attachment', {'policy_version': version['id']}, 'id')
+    if len(atts) < expected:
+        return '✗', f'系统里只有 {len(atts)} 个附件，导入包有 {expected} 个：导入没做完，先重跑 import', None
     others = api.find('brightrule_policy_version', {'policy': policy['id'], 'version_status': 'current'}, 'version_no')
     note = '草稿 → 现行' + (f'；原现行版本 {others[0].get("version_no")} 将改为已失效' if others else '')
     return '✓', note, version['id']

@@ -52,7 +52,8 @@ CLAUSE = re.compile(r'^(第[零〇一二三四五六七八九十百千0-9]+条(?
 # 文号：机关代字〔年份〕序号号，如「示例字〔2025〕3号」
 DOC_NO_RX = re.compile(r'[A-Za-z\u4e00-\u9fff]{1,12}\s*[〔﹝\[［【(（]\s*(?:19|20)\d{2}\s*[〕﹞\]］】)）]\s*\d{1,4}\s*号')
 MD_LEADING = re.compile(r'^([#>*+\-]|\d+[.)])(\s|$)')
-ATTACH_START = re.compile(r'^附\s*件\s*([0-9０-９]{1,2}|[一二三四五六七八九十]{1,2})?\s*[:：]?$')
+# 附件、附表的起始行：「附件1」「附表 1：」……原文写的是哪个字，导入后就叫哪个（Attachment.label）
+ATTACH_START = re.compile(r'^附\s*([件表])\s*([0-9０-９]{1,2}|[一二三四五六七八九十]{1,2})?\s*[:：]?$')
 COLOPHON = re.compile(r'(印发|印制)$|^抄\s*送\s*[:：]')
 # 目录：Word 目录样式（toc 1 / 目录 1）、指向 _Toc 书签的链接、目录控件；手写目录是「目录」二字之后一串「标题 + 页码」
 TOC_STYLE = re.compile(r'^(?:toc|目录)\s*\d$')
@@ -493,11 +494,17 @@ def docx_to_markdown(parts: Dict[str, bytes]) -> str:
 
 # ── 附件拆分 ──────────────────────────────────────────────────────────────
 class Attachment:
-    def __init__(self, number: int, title: str, blocks: List[etree._Element]):
+    def __init__(self, number: int, title: str, blocks: List[etree._Element], kind: str = '件'):
         self.number = number
         self.title = title
         self.blocks = blocks
+        self.kind = kind          # 原文写的是「附件」还是「附表」
         self.tables = sum(1 for b in blocks for _ in b.iter(w('tbl')))
+
+    @property
+    def label(self) -> str:
+        """原文里的编号，如「附件1」「附表2」。"""
+        return f'附{self.kind}{self.number}'
 
     @property
     def name(self) -> str:
@@ -529,12 +536,12 @@ def split_document(doc: etree._Element) -> Tuple[List[etree._Element], List[Atta
     """把正文的顶层块分成：正文、各附件、文末版记。没有附件时附件列表为空、版记为空。"""
     body = doc.find(w('body'))
     blocks = [b for b in body if b.tag != w('sectPr')] if body is not None else []
-    starts: List[Tuple[int, Optional[int]]] = []
+    starts: List[Tuple[int, Optional[int], str]] = []
     for i, b in enumerate(blocks):
         if b.tag == w('p'):
             m = ATTACH_START.match(_plain(b))
             if m:
-                starts.append((i, _cn_int(m.group(1)) if m.group(1) else None))
+                starts.append((i, _cn_int(m.group(2)) if m.group(2) else None, m.group(1)))
     if not starts:
         return blocks, [], []
     end_all = len(blocks)
@@ -545,9 +552,9 @@ def split_document(doc: etree._Element) -> Tuple[List[etree._Element], List[Atta
     # 版记前面成串的空段落（排版用的空行）也归版记
     while end_all > starts[-1][0] + 1 and blocks[end_all - 1].tag == w('p') and not _plain(blocks[end_all - 1]):
         end_all -= 1
-    bounds = [s for s, _n in starts[1:]] + [end_all]
+    bounds = [s for s, _n, _k in starts[1:]] + [end_all]
     attachments = []
-    for k, ((start, number), end) in enumerate(zip(starts, bounds), start=1):
+    for k, ((start, number, kind), end) in enumerate(zip(starts, bounds), start=1):
         part = blocks[start:end]  # 含「附件1」这一行，单独打开时也知道是第几个附件
         title = ''
         for b in part[1:]:
@@ -556,7 +563,7 @@ def split_document(doc: etree._Element) -> Tuple[List[etree._Element], List[Atta
             if b.tag == w('p') and _plain(b):
                 title = _plain(b)
                 break
-        attachments.append(Attachment(number or k, title, part))
+        attachments.append(Attachment(number or k, title, part, kind))
     return blocks[:starts[0][0]], attachments, blocks[end_all:]
 
 
@@ -576,13 +583,13 @@ def document_markdown(parts: Dict[str, bytes], split: bool = True) -> Tuple[str,
 
 
 def attachment_markdown(conv: 'Converter', a: Attachment) -> str:
-    """附件开头标「# 附件N：标题」，原来的「附件N」和标题两行不再重复。"""
+    """附件开头标「# 附件N：标题」（原文写的是附表就是「# 附表N：标题」），原来的编号行和标题行不再重复。"""
     body = conv.render(a.blocks, notes=False).split('\n\n')
     if body and ATTACH_START.match(body[0].strip()):
         body = body[1:]
     if body and a.title and body[0].strip() == a.title:
         body = body[1:]
-    head = f'# 附件{a.number}' + (f'：{a.title}' if a.title else '')
+    head = f'# {a.label}' + (f'：{a.title}' if a.title else '')
     return '\n\n'.join([head] + body).rstrip('\n') + '\n'
 
 

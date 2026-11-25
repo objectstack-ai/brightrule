@@ -1,7 +1,10 @@
 import { ObjectSchema, Field } from '@objectstack/spec/data';
 
 /**
- * 制度主表 — one row per policy. Its text lives on its versions and clauses.
+ * 制度主表 — one row per policy. Its text is the body of its current version
+ * (`current_version` → `brightrule_policy_version.body_md`); the descriptions
+ * below are what an AI client reads through `describe_object`, so they say
+ * where.
  *
  * Named `brightrule_policy`, never bare `policy`: on this platform *policy*
  * means a permission / security policy (AGENTS.md).
@@ -16,7 +19,8 @@ export const Policy = ObjectSchema.create({
   pluralLabel: '制度',
   icon: 'book-open',
   nameField: 'title',
-  description: '制度主表：编号、分类、发文单位、归口部门、状态、现行版本与复审安排',
+  description:
+    '制度目录（每份制度一行，不含正文）。正文在现行版本上：current_version 指向现行的 brightrule_policy_version 记录，读它的 body_md。员工可问的只有 status = published 的制度',
 
   fieldGroups: [
     { key: 'basic', label: '基本信息' },
@@ -50,10 +54,15 @@ export const Policy = ObjectSchema.create({
     }),
     issuing_unit: Field.text({ label: '发文单位', maxLength: 100, group: 'basic' }),
     department: Field.text({ label: '归口部门', maxLength: 100, group: 'basic' }),
-    summary: Field.textarea({ label: '目录摘要', group: 'basic' }),
+    summary: Field.textarea({
+      label: '目录摘要',
+      group: 'basic',
+      description: '一两句话说明本制度管什么，供按目录挑选制度；可能为空，为空不代表没有正文',
+    }),
     status: Field.select({
       label: '状态',
       group: 'effect',
+      description: 'published = 已发布，可据以作答；draft = 草稿，尚无现行版本；revising = 修订中；abolished = 已废止，不再有效',
       options: [
         { label: '草稿', value: 'draft', color: '#6B7280', default: true },
         { label: '已发布', value: 'published', color: '#10B981' },
@@ -61,7 +70,12 @@ export const Policy = ObjectSchema.create({
         { label: '已废止', value: 'abolished', color: '#EF4444' },
       ],
     }),
-    current_version: Field.text({ label: '现行版本', maxLength: 20, group: 'effect' }),
+    current_version: Field.lookup('brightrule_policy_version', {
+      label: '现行版本',
+      group: 'effect',
+      description:
+        '指向现行版本记录（由版本设为现行时自动填写）；get_record 读这条版本即得正文 body_md，版本号 version_no 写在引用出处的制度名之后',
+    }),
     effective_date: Field.date({ label: '生效日期', group: 'effect' }),
     next_review_date: Field.date({ label: '下次复审日', group: 'effect' }),
   },

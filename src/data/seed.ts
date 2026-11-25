@@ -1,13 +1,16 @@
 import { defineSeed, seedFile } from '@objectstack/spec/data';
 import { Policy } from '../objects/policy.object.js';
 import { PolicyVersion } from '../objects/policy-version.object.js';
-import { PolicyDocument } from '../objects/policy-document.object.js';
+import { PolicyAttachment } from '../objects/policy-attachment.object.js';
 import { PolicyRelation } from '../objects/policy-relation.object.js';
 import { Clause } from '../objects/clause.object.js';
 import { assembleBody, textStats } from './document-text.js';
 
 // Sample policies — fictional demo data, loaded in dev and test only (never in
 // production). Lookups name their parent by its seed key (`title`).
+// A policy's `current_version` is not seeded: it points at a version, which is
+// seeded after the policy, and the version hook fills it when the current
+// version is written (src/qa/version-current.hook.ts).
 // No inquiries are seeded: an inquiry is answered when it is saved, so the
 // demo asks its questions against the running app.
 
@@ -21,26 +24,23 @@ const policies = defineSeed(Policy, {
   env: ['dev', 'test'],
   externalId: 'title',
   records: [
-    { title: T, policy_no: 'FIN-001', issuing_unit: '集团', category: 'finance', department: '财务部', status: 'published', current_version: 'V3.0', effective_date: '2026-07-01', next_review_date: '2027-06-30', summary: '国内出差的住宿、交通、补贴标准与报销要求。' },
-    { title: L, policy_no: 'HR-002', issuing_unit: '集团', category: 'hr', department: '人力资源部', status: 'published', current_version: 'V2.1', effective_date: '2026-03-01', next_review_date: '2027-02-28', summary: '工作时间、请假类型、年休假与审批权限。' },
-    { title: S, policy_no: 'IT-003', issuing_unit: '集团', category: 'it', department: '信息技术部', status: 'published', current_version: 'V1.2', effective_date: '2026-05-15', next_review_date: '2026-12-15', summary: '账号口令、数据分级与外部工具使用要求。' },
-    { title: G, policy_no: 'CMP-004', issuing_unit: '集团', category: 'compliance', department: '合规部', status: 'published', current_version: 'V1.1', effective_date: '2026-04-01', next_review_date: '2027-03-31', summary: '礼品礼金收受标准与利益冲突申报。' },
-    { title: C, policy_no: 'CMP-005', issuing_unit: '集团', category: 'compliance', department: '法务部', status: 'published', current_version: 'V2.0', effective_date: '2026-06-01', next_review_date: '2027-05-31', summary: '合同起草、审查、签署与归档。' },
+    { title: T, policy_no: 'FIN-001', issuing_unit: '集团', category: 'finance', department: '财务部', status: 'published', effective_date: '2026-07-01', next_review_date: '2027-06-30', summary: '国内出差的住宿、交通、补贴标准与报销要求。' },
+    { title: L, policy_no: 'HR-002', issuing_unit: '集团', category: 'hr', department: '人力资源部', status: 'published', effective_date: '2026-03-01', next_review_date: '2027-02-28', summary: '工作时间、请假类型、年休假与审批权限。' },
+    { title: S, policy_no: 'IT-003', issuing_unit: '集团', category: 'it', department: '信息技术部', status: 'published', effective_date: '2026-05-15', next_review_date: '2026-12-15', summary: '账号口令、数据分级与外部工具使用要求。' },
+    { title: G, policy_no: 'CMP-004', issuing_unit: '集团', category: 'compliance', department: '合规部', status: 'published', effective_date: '2026-04-01', next_review_date: '2027-03-31', summary: '礼品礼金收受标准与利益冲突申报。' },
+    { title: C, policy_no: 'CMP-005', issuing_unit: '集团', category: 'compliance', department: '法务部', status: 'published', effective_date: '2026-06-01', next_review_date: '2027-05-31', summary: '合同起草、审查、签署与归档。' },
   ],
 });
 
-const versions = defineSeed(PolicyVersion, {
-  env: ['dev', 'test'],
-  externalId: 'title',
-  records: [
+/** The sample versions; each one's body is assembled from its clauses below. */
+const VERSION_ROWS = [
     { title: `${T} V2.0`, policy: T, version_no: 'V2.0', version_status: 'superseded', effective_date: '2024-07-01', change_note: '旧版本，已被 V3.0 替代。' },
     { title: `${T} V3.0`, policy: T, version_no: 'V3.0', version_status: 'current', effective_date: '2026-07-01', change_note: '上调一线城市住宿标准，新增网约车报销规定。' },
     { title: `${L} V2.1`, policy: L, version_no: 'V2.1', version_status: 'current', effective_date: '2026-03-01', change_note: '明确年休假天数与病假审批。' },
     { title: `${S} V1.2`, policy: S, version_no: 'V1.2', version_status: 'current', effective_date: '2026-05-15', change_note: '新增外部 AI 工具使用条款。' },
     { title: `${G} V1.1`, policy: G, version_no: 'V1.1', version_status: 'current', effective_date: '2026-04-01', change_note: '明确礼品价值上限。' },
     { title: `${C} V2.0`, policy: C, version_no: 'V2.0', version_status: 'current', effective_date: '2026-06-01', change_note: '调整法务审查门槛。' },
-  ],
-});
+];
 
 type ClauseRow = [policy: string, version: string, no: string, title: string, content: string, keywords: string];
 
@@ -59,7 +59,7 @@ const CLAUSES: ClauseRow[] = [
 ];
 
 const isCurrentVersion = (title: string) =>
-  versions.records.some((v) => v.title === title && v.version_status === 'current');
+  VERSION_ROWS.some((v) => v.title === title && v.version_status === 'current');
 
 const clauses = defineSeed(Clause, {
   env: ['dev', 'test'],
@@ -75,15 +75,15 @@ const clauses = defineSeed(Clause, {
   })),
 });
 
-// ── 版本文档 ────────────────────────────────────────────────────────────────
-// One body per version, assembled from that version's clauses, plus two
-// attachments on 差旅费报销管理办法 V3.0. Every document carries an original
-// file. This repository is public and ships no real policy and no docx / PDF
-// (brightrule#4), so each original is a SYNTHETIC plain-text placeholder under
-// fixtures/originals/, marked 合成示例 in its first line, written into the
-// file field with `seedFile` (the build bundles the bytes). `content_hash` is
-// the SHA-256 of those bytes; seed-documents.test.ts checks every hash against
-// its file.
+// ── 版本正文与附件 ──────────────────────────────────────────────────────────
+// Each version's body (`body_md`) is assembled from that version's clauses;
+// 差旅费报销管理办法 V3.0 also has two attachments. Every body and attachment
+// carries an original file. This repository is public and ships no real policy
+// and no docx / PDF (brightrule#4), so each original is a SYNTHETIC plain-text
+// placeholder under fixtures/originals/, marked 合成示例 in its first line,
+// written into the file field with `seedFile` (the build bundles the bytes).
+// `content_hash` is the SHA-256 of those bytes; seed-documents.test.ts checks
+// every hash against its file.
 
 /** An original placeholder: package-relative path, download name, SHA-256 of its bytes. */
 const original = (path: string, name: string, sha256: string) => ({
@@ -109,27 +109,41 @@ const FILE_STEM: Record<string, string> = { [T]: 'travel', [L]: 'leave', [S]: 's
 const originalOf = (file: string, name: string) =>
   original(`fixtures/originals/${file}`, name, ORIGINAL_SHA256[file]);
 
-const bodyDocument = (v: (typeof versions.records)[number]) => {
-  const title = String(v.title);
-  const policy = String(v.policy);
-  const versionNo = String(v.version_no);
+/** A version row with its body: Markdown, article index and sizes (its original is seeded apart, below). */
+const withBody = (v: (typeof VERSION_ROWS)[number]) => {
   const { markdown, articleIndex } = assembleBody(
-    `${policy}（${versionNo}）`,
-    CLAUSES.filter(([p, ver]) => p === policy && ver === versionNo).map(([, , no, title, text]) => ({ no, title, text })),
+    `${v.policy}（${v.version_no}）`,
+    CLAUSES.filter(([p, ver]) => p === v.policy && ver === v.version_no).map(([, , no, title, text]) => ({ no, title, text })),
   );
+  const { text_chars, text_tokens } = textStats(markdown);
   return {
-    title: `${title} 正文`,
-    policy_version: title,
-    policy,
-    doc_kind: 'body',
-    sort_no: 0,
-    body_md_redacted: markdown,
+    ...v,
+    body_md: markdown,
     article_index: articleIndex,
-    ...textStats(markdown),
-    is_current: v.version_status === 'current',
-    ...originalOf(`${FILE_STEM[policy]}-${versionNo.toLowerCase()}-body.txt`, `${title}（合成示例原件）.txt`),
+    text_chars,
+    text_tokens,
   };
 };
+
+const versions = defineSeed(PolicyVersion, {
+  env: ['dev', 'test'],
+  externalId: 'title',
+  records: VERSION_ROWS.map(withBody),
+});
+
+// The body originals, as a dataset of their own that only fills two columns of
+// the versions above. A seed file exists only in a built package: a load from
+// source (vitest's stack) refuses the dataset that names one, and a version
+// row that carried its file would take every clause and relation down with it.
+const versionOriginals = defineSeed(PolicyVersion, {
+  env: ['dev', 'test'],
+  externalId: 'title',
+  mode: 'update',
+  records: VERSION_ROWS.map((v) => ({
+    title: v.title,
+    ...originalOf(`${FILE_STEM[v.policy]}-${v.version_no.toLowerCase()}-body.txt`, `${v.title}（合成示例原件）.txt`),
+  })),
+});
 
 /** 附件 1 — a normative attachment: its table is part of the rule, so the AI reads it. */
 const LODGING_TABLE = [
@@ -145,29 +159,30 @@ const LODGING_TABLE = [
 ].join('\n');
 
 const T3 = `${T} V3.0`;
-const documents = defineSeed(PolicyDocument, {
+// An attachment's title is its own name, so it is unique only within its
+// version: the seed key is the version and the number.
+const attachments = defineSeed(PolicyAttachment, {
   env: ['dev', 'test'],
-  externalId: 'title',
+  externalId: ['policy_version', 'sort_no'],
   records: [
-    ...versions.records.map(bodyDocument),
     {
-      title: `${T3} 附件1 住宿标准表`,
+      title: '住宿标准表',
+      label: '附件1',
       policy_version: T3,
       policy: T,
-      doc_kind: 'attachment',
       attachment_class: 'normative',
       sort_no: 1,
-      body_md_redacted: LODGING_TABLE,
+      body_md: LODGING_TABLE,
       ...textStats(LODGING_TABLE),
       is_current: true,
       ...originalOf('travel-v3.0-attachment-1.txt', `${T3} 附件1 住宿标准表（合成示例原件）.txt`),
     },
     {
       // A form people fill in: only the original, nothing for the AI.
-      title: `${T3} 附件2 出差审批单`,
+      title: '出差审批单',
+      label: '附件2',
       policy_version: T3,
       policy: T,
-      doc_kind: 'attachment',
       attachment_class: 'form',
       sort_no: 2,
       ...textStats(undefined),
@@ -219,4 +234,4 @@ const relations = defineSeed(PolicyRelation, {
   ],
 });
 
-export const BrightRuleSeedData = [policies, versions, documents, clauses, relations];
+export const BrightRuleSeedData = [policies, versions, versionOriginals, attachments, clauses, relations];

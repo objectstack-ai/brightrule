@@ -3,5 +3,5 @@ export { Policy } from './policy.object.js';
 export { PolicyVersion } from './policy-version.object.js';
 export { Clause } from './clause.object.js';
 export { Question } from './question.object.js';
-export { PolicyDocument } from './policy-document.object.js';
+export { PolicyAttachment } from './policy-attachment.object.js';
 export { PolicyRelation } from './policy-relation.object.js';

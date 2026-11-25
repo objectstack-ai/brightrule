@@ -17,7 +17,7 @@ import { Question } from '../objects/question.object.js';
 // it a list view — `objectstack generate view OBJECT` writes one.
 // Navigation follows the two audiences (docs/review-2026-11-24.md, M1/M2):
 // employees see the library and their own questions; policy administrators get
-// 「制度维护」 with the work queues. Versions, version documents and relations
+// 「制度维护」 with the work queues. Versions, attachments and relations
 // are master-detail children: they are read on the parent's record page, not
 // from menus of their own. The clause table is being retired (D6, #19) and the
 // Notes sample is to be deleted (#10), so neither has an entry. The first item

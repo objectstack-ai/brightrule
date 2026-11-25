@@ -30,8 +30,8 @@ export const PolicyInquirySkill = defineSkill({
 
 ## 数据在哪里
 
-- 制度目录：对象 brightrule_policy。只看 status = "published" 的制度；字段 id、title、category、issuing_unit、department、summary、current_version、effective_date。
-- 制度正文：在现行版本上。制度的 current_version 指向现行的版本记录（对象 brightrule_policy_version），正文全文在它的字段 body_md（Markdown，已脱敏）。
+- 制度目录：对象 brightrule_policy。只看 status = "published" 的制度；字段 id、title、category、issuing_unit、department、summary、current_version、effective_date。status 的取值：published 已发布（可据以作答）、draft 草稿（还没有现行版本）、revising 修订中、abolished 已废止（不再有效，不据以作答）。summary 是一两句话的目录摘要，可能为空，为空不代表没有正文。
+- 制度正文：在现行版本上。制度的 current_version 指向现行的版本记录（对象 brightrule_policy_version，版本设为现行时自动填写），正文全文在它的字段 body_md（Markdown，已脱敏）；引用出处时把版本号 version_no 写在制度名之后。
 - 附件：对象 brightrule_policy_attachment，挂在版本下。label 是原文里的编号（附件1、附表2），title 是附件自己的名称。只有 attachment_class = "normative"（规范性）的附件是正文的一部分，全文在它的 body_md；"form"（表单）、"original"（仅原件）不作答复依据。
 - 条款对象 brightrule_clause 不是正文来源：导入的制度没有条款记录，不要用它判断一份制度「没有内容」。
 - 不读 original_file（原件文件），也不调用 read_file：交给你的只能是脱敏正文。

@@ -737,6 +737,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     summary = summarize(results, terms, patterns)
     write_mapping(internal / '对照表.csv', results, args.input)
+    write_manifest(internal / '文件清单.json', results, args.input, docs_dir)
     write_summary(internal / '替换汇总.csv', summary)
     write_report(internal / '报告.md', results, skipped, args, out_root, now, len(terms), len(patterns), summary)
 
@@ -814,6 +815,20 @@ def write_summary(path: Path, summary: List[SummaryRow]) -> None:
         wr.writerow(['来源', '类别', '原文或规则', '替换为', '替换次数', '涉及文件数'])
         for s in summary:
             wr.writerow([s.source, s.category, s.original, s.replacement, s.count, len(s.files)])
+
+
+def write_manifest(path: Path, results: List[FileResult], input_dir: Path, docs_dir: Path) -> None:
+    """原件与脱敏文件的对应关系，供 package.py 找原件。含原件路径（可能带真实名称），所以放在内部留存。"""
+    import json
+    rows = [{
+        'source': r.source.relative_to(input_dir).as_posix(),
+        'output': r.output.relative_to(docs_dir).as_posix() if r.output else None,
+        'passed': not (r.error or r.leaks),
+        'error': r.error,
+        'leaks': len(r.leaks),
+        'attachments': len(r.attachments),
+    } for r in results]
+    path.write_text(json.dumps({'files': rows}, ensure_ascii=False, indent=1), encoding='utf-8')
 
 
 def write_mapping(path: Path, results: List[FileResult], input_dir: Path) -> None:

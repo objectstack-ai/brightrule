@@ -284,8 +284,8 @@ class RedactToolTest(unittest.TestCase):
         policies = mdstats.collect(self.run_root / '脱敏文件')
         self.assertEqual(len(policies), 1)
         self.assertGreater(policies[0].tokens, 0)
-        self.assertEqual(mdstats.estimate_tokens('一二三四'), 7)        # 4 × 1.5 × 1.1 = 6.6 → 7
-        self.assertEqual(mdstats.estimate_tokens('abcdefgh'), 3)        # 8 / 4 × 1.1 = 2.2 → 3
+        self.assertEqual(mdstats.estimate_tokens('一二三四'), 3)        # 4 ÷ 1.5 = 2.7 → 3
+        self.assertEqual(mdstats.estimate_tokens(''), 0)
         self.assertEqual(mdstats.main(['--input', str(self.run_root)]), 0)
 
     def test_word_can_still_read_it(self):
@@ -595,6 +595,142 @@ class ScanTest(unittest.TestCase):
             self.assertTrue(terms)
         finally:
             shutil.rmtree(tmp)
+
+
+def _policy_docx(path: Path, fee: str = '100') -> None:
+    """合成的一份制度：发文通知、制度信息表、两章、缺第三条、一个表单附件、版记。名称全部虚构。"""
+    def p(t, brk=False):
+        ppr = '<w:pPr><w:pageBreakBefore/></w:pPr>' if brk else ''
+        return f'<w:p>{ppr}<w:r><w:t xml:space="preserve">{t}</w:t></w:r></w:p>'
+
+    def tbl(rows):
+        return '<w:tbl>' + ''.join('<w:tr>' + ''.join(f'<w:tc>{p(c)}</w:tc>' for c in r) + '</w:tr>' for r in rows) + '</w:tbl>'
+    body = (p('华东示例集团文件') + p('华示字〔2025〕7号　签发人：王某某') + p('关于印发《差旅示例办法》的通知')
+            + p('各部门：现印发给你们。') + p('华东示例集团综合办公室') + p('2025年3月1日')
+            + tbl([['制度名称', '差旅示例办法', '制度层级', '三级'], ['制度编码', 'HD-CW-001', '生效日期', '2025年3月1日'],
+                   ['责任部门', '财务部', '制度类别', '财务类']])
+            + p('差旅示例办法') + p('第一章　总则') + p('第一条　为规范差旅，制定本办法。') + p('第二条　适用于全体员工。')
+            + p('第二章　标准') + p(f'第四条　伙食补助每人每天{fee}元。') + p('第五条　本办法自2025年3月1日起施行。')
+            + p('附件：出差申请单') + p('附件1', True) + p('出差申请单') + tbl([['出差人', '', '部门', ''], ['事由', '', '审批', '']])
+            + p('华东示例集团综合办公室　2025年3月1日印发'))
+    parts = dict(PARTS)
+    parts['word/document.xml'] = f'<w:document {W}><w:body>{body}<w:sectPr/></w:body></w:document>'
+    parts.pop('word/comments.xml')
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, 'w') as z:
+        for name, text in parts.items():
+            z.writestr(name, text)
+
+
+class PackageTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.src = self.tmp / '原件'
+        _policy_docx(self.src / '财务' / '差旅示例办法.docx')
+        self.dict = self.tmp / '词典.csv'
+        self.dict.write_text('类别,原文,替换为,备注\n集团,华东示例集团,本集团,\n人名,王某某,,\n', encoding='utf-8')
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def redact_and_pack(self):
+        import package
+        out = self.tmp / '结果'
+        redact.main(['--input', str(self.src), '--dict', str(self.dict), '--output', str(out)])
+        run = sorted(out.iterdir())[-1]
+        self.assertTrue((run / '内部留存-勿外发' / '文件清单.json').exists())
+        package.main(['--run', str(run), '--originals', str(self.src), '--output', str(self.tmp / '导入包')])
+        return sorted((self.tmp / '导入包').iterdir())[-1]
+
+    def test_package_builds_manifest_sheet_and_report(self):
+        import json
+        pkg = self.redact_and_pack()
+        folder = pkg / '财务' / '差旅示例办法'
+        m = json.loads((folder / 'manifest.json').read_text(encoding='utf-8'))
+        self.assertEqual(m['meta']['policy_no'], 'HD-CW-001')
+        self.assertEqual(m['meta']['effective_date'], '2025-03-01')
+        self.assertEqual(m['meta']['version_no'], '华示字〔2025〕7号')
+        body, att = m['documents']
+        text = (folder / '正文.md').read_text(encoding='utf-8')
+        self.assertNotIn('华东示例集团', text)
+        self.assertNotIn('# 附件（已拆分', text)
+        self.assertEqual([e['article'] for e in body['article_index']], ['第一条', '第二条', '第四条', '第五条'])
+        first, last = body['article_index'][0], body['article_index'][-1]
+        self.assertTrue(text[first['redacted'][0]:].startswith('**第一条**'))
+        self.assertEqual(text[last['redacted'][0]:last['redacted'][1]], '**第五条** 本办法自2025年3月1日起施行。')
+        self.assertEqual(first['chapter'], '第一章　总则')
+        self.assertEqual(body['text_chars'], len(text))
+        self.assertEqual(body['text_tokens'], -(-len(text) * 2 // 3))
+        self.assertEqual(body['content_hash'], hashlib.sha256((self.src / '财务' / '差旅示例办法.docx').read_bytes()).hexdigest())
+        self.assertEqual(att['attachment_class'], 'form')
+        self.assertTrue((folder / '附件1.original.docx').exists())
+        sheet = (pkg / '批次清单.csv').read_text(encoding='utf-8-sig')
+        self.assertIn('缺条：第3条', sheet)
+        # 同一份原件再打包一次，附件原件的哈希不变（导入去重靠它）
+        pkg2 = self.redact_and_pack()
+        m2 = json.loads((pkg2 / '财务' / '差旅示例办法' / 'manifest.json').read_text(encoding='utf-8'))
+        self.assertEqual([d['content_hash'] for d in m2['documents']], [d['content_hash'] for d in m['documents']])
+
+    def test_import_plan_is_idempotent_and_guards_current_versions(self):
+        import importer
+        pkg = self.redact_and_pack()
+
+        class FakeApi(importer.Api):
+            def __init__(self):
+                self.base, self.rows, self.files, self.n = 'http://test', {}, {}, 0
+
+            def _id(self):
+                self.n += 1
+                return f'id{self.n}'
+
+            def find(self, obj, where, select=None):
+                return [dict(r) for r in self.rows.get(obj, []) if all(r.get(k) == v for k, v in where.items())]
+
+            def create(self, obj, row):
+                row = {**row, 'id': self._id()}
+                if obj == 'brightrule_policy_version':
+                    row.setdefault('version_status', 'draft')
+                self.rows.setdefault(obj, []).append(row)
+                return row
+
+            def update(self, obj, rid, row):
+                for r in self.rows[obj]:
+                    if r['id'] == rid:
+                        r.update(row)
+
+            def upload(self, data, filename, mime=importer.DOCX_MIME):
+                fid = self._id()
+                self.files[fid] = data
+                return fid
+
+            def category_options(self):
+                return [('finance', '财务')]
+
+        api = FakeApi()
+        row = importer.read_sheet(pkg)[0]
+        rp = importer.plan_row(api, pkg, row, api.category_options())
+        self.assertIsNone(rp.rejected)
+        importer.apply_row(api, rp)
+        self.assertEqual(len(api.rows['brightrule_policy_document']), 2)
+        self.assertEqual(api.rows['brightrule_policy'][0]['category'], 'finance')
+        # 再来一次：无事可做
+        self.assertEqual(importer.plan_row(api, pkg, row, []).steps, [])
+        # 设为现行后，内容变了就拒绝
+        api.rows['brightrule_policy_version'][0]['version_status'] = 'current'
+        _policy_docx(self.src / '财务' / '差旅示例办法.docx', fee='120')
+        pkg2 = self.redact_and_pack()
+        rp = importer.plan_row(api, pkg2, importer.read_sheet(pkg2)[0], [])
+        self.assertIn('已是现行', rp.rejected)
+        # 换版本号：新建版本
+        row2 = dict(importer.read_sheet(pkg2)[0], 版本号='华示字〔2025〕9号')
+        rp = importer.plan_row(api, pkg2, row2, [])
+        self.assertIsNone(rp.rejected)
+        self.assertIn('新建版本', ' '.join(rp.actions))
+
+    def test_import_refuses_internal_folder(self):
+        import importer
+        with self.assertRaises(SystemExit):
+            importer.main(['--package', str(self.tmp / '内部留存-勿外发'), '--url', 'http://test'])
 
 
 if __name__ == '__main__':

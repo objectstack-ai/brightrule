@@ -40,7 +40,9 @@ CN_DIGITS = '零一二三四五六七八九'
 CN_LEGAL = '零壹贰叁肆伍陆柒捌玖'
 CHAPTER = re.compile(r'^第[零〇一二三四五六七八九十百千0-9]+章')
 SECTION = re.compile(r'^第[零〇一二三四五六七八九十百千0-9]+节')
-CLAUSE = re.compile(r'^(第[零〇一二三四五六七八九十百千0-9]+条)[\s\u3000]*')
+CLAUSE = re.compile(r'^(第[零〇一二三四五六七八九十百千0-9]+条(?:之[一二三四五六七八九十]+)?)[\s\u3000]*')
+# 文号：机关代字〔年份〕序号号，如「示例字〔2025〕3号」
+DOC_NO_RX = re.compile(r'[A-Za-z\u4e00-\u9fff]{1,12}\s*[〔﹝\[［【(（]\s*(?:19|20)\d{2}\s*[〕﹞\]］】)）]\s*\d{1,4}\s*号')
 MD_LEADING = re.compile(r'^([#>*+\-]|\d+[.)])(\s|$)')
 ATTACH_START = re.compile(r'^附\s*件\s*([0-9０-９]{1,2}|[一二三四五六七八九十]{1,2})?\s*[:：]?$')
 COLOPHON = re.compile(r'(印发|印制)$|^抄\s*送\s*[:：]')
@@ -599,5 +601,6 @@ def attachment_docx(parts: Dict[str, bytes], att: Attachment) -> bytes:
                     for e in list(st.iter(w('embedTrueTypeFonts'))) + list(st.iter(w('saveSubsetFonts'))):
                         e.getparent().remove(e)
                     data = etree.tostring(st, xml_declaration=True, encoding='UTF-8', standalone=True)
-            z.writestr(name, data)
+            # 固定时间戳：同一份原件每次拆出的附件字节相同，内容哈希才稳定（导入去重靠它）
+            z.writestr(zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0)), data, compress_type=zipfile.ZIP_DEFLATED)
     return buf.getvalue()

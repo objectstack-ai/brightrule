@@ -9,7 +9,7 @@
     Markdown统计.md    同样的排名，加上合计和阈值说明
     Markdown明细.csv   每个 .md 一行，也按大小排
 
-token 估算用设计文档 P3.3 的统一公式：汉字每个计 1.5，其余每 4 个字符计 1，再加 10%。
+token 估算与应用的版本文档一致（src/data/document-text.ts）：字符数 ÷ 1.5，向上取整。
 阈值（设计文档场景 B、C）：单份制度超过 1.2 万 token 不再整份交给模型，改为段落检索；
 全部制度合计不超过 2.4 万 token 时，通用问可以全部放入。
 """
@@ -26,18 +26,19 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 PER_POLICY_TOKENS = 12000
 ALL_POLICIES_TOKENS = 24000
-CJK = re.compile(r'[㐀-鿿豈-﫿　-〿＀-￯]')
 
 
-def estimate_tokens(text: str) -> int:
-    cjk = len(CJK.findall(text))
-    other = len(text) - cjk
-    return math.ceil((cjk * 1.5 + other / 4) * 1.1)
+CHARS_PER_TOKEN = 1.5   # 与应用 src/data/document-text.ts 一致：中文为主的制度文本约 1.5 个字符一个 token
 
 
 def count_chars(text: str) -> int:
-    """字数：不计空白和 Markdown 表格竖线、标题井号等标记。"""
-    return len(re.sub(r'[\s|#*>\-]', '', text))
+    """字符数：Unicode 码点，按存进系统的 Markdown 原样计（含标记和换行），与应用的 text_chars 一致。"""
+    return len(text)
+
+
+def estimate_tokens(text: str) -> int:
+    """token 估算：⌈字符数 ÷ 1.5⌉，与应用的 text_tokens 一致。只用于判断篇幅，不用于计费。"""
+    return math.ceil(len(text) / CHARS_PER_TOKEN) if text else 0
 
 
 @dataclass
@@ -132,7 +133,7 @@ def write_outputs(out_dir: Path, policies: List[Policy]) -> Tuple[Path, Path]:
     for i, p in enumerate(rows, start=1):
         flag = '⚠ 超过单份阈值' if p.tokens > PER_POLICY_TOKENS else ''
         lines.append(f'| {i} | {p.name} | {p.tokens:,} | {p.chars:,} | {kb(p.bytes)} | {len(p.attachments)} | {flag} |')
-    lines += ['', 'token 为估算（汉字每个计 1.5，其余每 4 个字符计 1，再加 10%），正文和全部附件都计入。'
+    lines += ['', 'token 为估算（字符数 ÷ 1.5，与系统里版本文档的 token 估算一致），正文和全部附件都计入。'
               '每个 .md 文件的明细见 `Markdown明细.csv`。']
     md_path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
     return csv_path, md_path

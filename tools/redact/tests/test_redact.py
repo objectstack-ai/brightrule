@@ -784,6 +784,12 @@ class PackageTest(unittest.TestCase):
         self.assertEqual(api.rows['brightrule_policy'][0]['category'], 'finance')
         # 再来一次：无事可做
         self.assertEqual(importer.plan_row(api, pkg, row, []).steps, [])
+        # Markdown 里有图片语法：拒绝整行
+        md_path = pkg / row['包内目录'] / '正文.md'
+        saved = md_path.read_text(encoding='utf-8')
+        md_path.write_text(saved + '\n![流程](data:image/png;base64,AAAA)\n', encoding='utf-8')
+        self.assertIn('图片', importer.plan_row(api, pkg, row, []).rejected)
+        md_path.write_text(saved, encoding='utf-8')
         # 早先正文也传了文件：换成默认打包后再导入，去掉正文文件；现行版本也可以（文字没变）
         body_doc['original_file'], body_doc['content_hash'] = 'old-file', 'old-hash'
         api.rows['brightrule_policy_version'][0]['version_status'] = 'current'

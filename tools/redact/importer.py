@@ -43,6 +43,8 @@ from typing import Dict, List, Optional, Sequence, Tuple
 DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 DOC_FIELDS = 'id,doc_kind,sort_no,attachment_class,title,content_hash,body_md_redacted,original_file'
 DATE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
+# 系统里不能有图片：Markdown 里出现图片语法（![…](…)、<img、data:image）就拒绝整行
+IMAGE_IN_MD = re.compile(r'!\[[^\]]*\]\(|<img\b|data:image/', re.I)
 
 
 class ApiError(Exception):
@@ -298,6 +300,10 @@ def plan_row(api: Api, package: Path, row: Dict[str, str], options: List[Tuple[s
         key = (doc['doc_kind'], int(doc['sort_no']))
         seen.add(key)
         md = (folder / doc['md']).read_text(encoding='utf-8') if doc.get('md') else None
+        if md and IMAGE_IN_MD.search(md):
+            rp.rejected = f"{doc.get('md')} 里有图片（系统里不能有图片），请去掉后重新打包"
+            rp.steps = []
+            return rp
         fields = {'title': doc['title'], 'doc_kind': doc['doc_kind'], 'sort_no': doc['sort_no'],
                   'body_md_redacted': md, 'article_index': doc.get('article_index'),
                   'has_text': doc['has_text'], 'text_chars': doc['text_chars'], 'text_tokens': doc['text_tokens'],

@@ -2,7 +2,8 @@
 """打包：把一次脱敏的结果整理成导入包，交给 import.py 写进系统（brightrule#11）。
 
 用法：
-    python3 package.py --run 脱敏结果/<时间> [--output 导入包]                      # 默认：文件用脱敏后的 docx
+    python3 package.py --run 脱敏结果/<时间> [--output 导入包]                      # 默认：正文只进 Markdown，附件另带脱敏后的 docx
+    python3 package.py --run 脱敏结果/<时间> --files redacted                        # 正文也带脱敏后的 docx
     python3 package.py --run 脱敏结果/<时间> --originals 原件目录 --files original   # 上传原件
 
 读：
@@ -12,16 +13,18 @@
 写 <output>/<时间>/：
     批次清单.csv     每份制度一行：制度编号、名称、版本号、生效日期……人工核对后导入以它为准
     检查报告.md      条号缺漏、重复、「之一」，附件分类，取不到的字段，被拒绝的文件
-    <每份制度>/       manifest.json、正文.md、正文.docx、附件N.md、附件N.docx
+    <每份制度>/       manifest.json、正文.md、附件N.md、附件N.docx（--files redacted / original 时还有 正文.docx）
 
-默认上传到系统「原件」字段的是脱敏后的 docx，导入包里没有原文；用 --files original 时导入包含原件，
-和「内部留存-勿外发」一样不能外发、不能进 Git。
+--files 决定哪些文件上传到系统的「原件」字段：
+    attachments（默认）  正文只进脱敏 Markdown，不传文件；附件（附表、表单）传脱敏后的 docx，员工可下载填写；
+    redacted             正文、附件都传脱敏后的 docx；
+    original             都传原件：导入包含原文，和「内部留存-勿外发」一样不能外发、不能进 Git。
 
 条号索引、字数、token 估算、内容哈希的口径与应用一致（src/data/document-text.ts、docs/policy-document.md）：
 - 字数 = 脱敏正文的 Unicode 码点数（含 Markdown 标记）；token = ⌈字数 ÷ 1.5⌉；
 - 条号索引每条 {article, chapter, redacted: [起, 止)}，偏移按码点计，起点在 **第X条** 标记处，
   终点在下一条或下一个标题之前，不含末尾空行；没有章时 chapter 为 null；
-- 内容哈希 = 上传的那个文件（默认脱敏后的 docx）字节的 SHA-256（十六进制小写）。
+- 内容哈希 = 上传的那个文件字节的 SHA-256（十六进制小写）；不传文件的正文取脱敏 Markdown（UTF-8）的 SHA-256。
 """
 from __future__ import annotations
 
@@ -272,7 +275,8 @@ class Packed:
 
 def pack_one(entry: Dict[str, object], docs: Path, originals: Optional[Path], out_root: Path,
              meta_from: str, files: str) -> Packed:
-    """files = 'redacted'：上传到系统的文件用脱敏后的 docx（正文、附件都是）；'original'：用原件。"""
+    """files = 'attachments'：正文不传文件，附件传脱敏后的 docx；'redacted'：正文、附件都传脱敏后的 docx；
+    'original'：都传原件。"""
     source = str(entry['source'])
     output = str(entry.get('output') or '')
     packed = Packed(folder=str(Path(output).with_suffix('')) if output else '', source=source)
@@ -306,14 +310,18 @@ def pack_one(entry: Dict[str, object], docs: Path, originals: Optional[Path], ou
 
     folder = out_root / packed.folder
     folder.mkdir(parents=True, exist_ok=True)
-    body_bytes = (originals / source).read_bytes() if files == 'original' else red_docx.read_bytes()
     (folder / '正文.md').write_text(body, encoding='utf-8')
-    (folder / '正文.docx').write_bytes(body_bytes)
+    if files == 'attachments':
+        body_file, body_hash = None, sha256(body.encode('utf-8'))
+    else:
+        body_bytes = (originals / source).read_bytes() if files == 'original' else red_docx.read_bytes()
+        (folder / '正文.docx').write_bytes(body_bytes)
+        body_file, body_hash = '正文.docx', sha256(body_bytes)
     stats = text_stats(body)
     packed.body_tokens = int(stats['text_tokens'])
     documents = [{'doc_kind': 'body', 'sort_no': 0, 'title': meta.get('title') or red_docx.stem,
-                  'md': '正文.md', 'file': '正文.docx', 'article_index': index,
-                  'content_hash': sha256(body_bytes), **stats}]
+                  'md': '正文.md', 'file': body_file, 'article_index': index,
+                  'content_hash': body_hash, **stats}]
 
     # 附件：脱敏件按「附件N-标题.md / .docx」配对；用原件时从原件里按同一规则拆出对应的附件
     att_dir = red_docx.parent / f'{red_docx.stem}-附件'
@@ -367,6 +375,8 @@ def pack_one(entry: Dict[str, object], docs: Path, originals: Optional[Path], ou
     return packed
 
 
+FILES_LABEL = {'attachments': '正文不传文件（只进脱敏 Markdown），附件传脱敏后的 docx',
+               'redacted': '正文、附件都传脱敏后的 docx（不含原文）', 'original': '原件'}
 CLASS_LABEL = {'normative': '规范性', 'form': '表单', 'original': '仅原件'}
 SHEET_COLUMNS = ['导入', '包内目录', '制度编号', '制度名称', '版本号', '生效日期', '发文日期', '制度类别', '制度层级',
                  '发文单位', '归口部门', '正文token', '附件', '问题']
@@ -377,8 +387,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument('--run', required=True, type=Path, help='一次脱敏的结果目录：脱敏结果/<时间>')
     ap.add_argument('--originals', type=Path,
                     help='原件目录（脱敏时的 --input）。只在 --files original 或 --meta original 时需要')
-    ap.add_argument('--files', choices=('redacted', 'original'), default='redacted',
-                    help='上传到系统的文件：脱敏后的 docx（默认）还是原件')
+    ap.add_argument('--files', choices=('attachments', 'redacted', 'original'), default='attachments',
+                    help='上传到系统的文件：attachments（默认）正文只进 Markdown、附件传脱敏后的 docx；'
+                         'redacted 正文、附件都传脱敏后的 docx；original 都传原件')
     ap.add_argument('--output', type=Path, default=Path('导入包'), help='导入包根目录，默认 ./导入包')
     ap.add_argument('--meta', choices=('original', 'redacted'),
                     help='制度名称、文号等元数据取原文还是脱敏后的写法；默认：给了 --originals 取原文，否则取脱敏后的')
@@ -434,7 +445,7 @@ def write_report(path: Path, packed: List[Packed], args) -> None:
     lines = ['# 打包检查报告（内部留存，勿外发）', '',
              f'- 时间：{_dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}',
              f'- 脱敏结果：{args.run}', f'- 原件目录：{args.originals or "（未使用）"}',
-             f'- 上传的文件：{"原件" if args.files == "original" else "脱敏后的 docx（不含原文）"}',
+             f'- 上传的文件：{FILES_LABEL[args.files]}',
              f'- 元数据取自：{"原文" if args.meta == "original" else "脱敏后的文字"}',
              f'- 打包 {len(ok)} 份，拒绝 {len(packed) - len(ok)} 份', '',
              '批次清单里「问题」一栏不为空的，请对照原件确认；制度名称、版本号必须有才能导入；制度编号、生效日期原文没有的可以留空。', '']

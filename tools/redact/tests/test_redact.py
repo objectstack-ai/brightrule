@@ -663,10 +663,12 @@ class PackageTest(unittest.TestCase):
         self.assertEqual(first['chapter'], '第一章　总则')
         self.assertEqual(body['text_chars'], len(text))
         self.assertEqual(body['text_tokens'], -(-len(text) * 2 // 3))
-        # 默认上传脱敏后的 docx：哈希按它算，导入包里没有原文
-        red_docx = self.run_dir / '脱敏文件' / '财务' / '差旅示例办法.docx'
-        self.assertEqual(body['content_hash'], hashlib.sha256(red_docx.read_bytes()).hexdigest())
-        self.assertEqual((folder / '正文.docx').read_bytes(), red_docx.read_bytes())
+        # 默认：正文不传文件（哈希按脱敏 Markdown 算），附件传脱敏后的 docx；导入包里没有原文
+        self.assertIsNone(body['file'])
+        self.assertFalse((folder / '正文.docx').exists())
+        self.assertEqual(body['content_hash'], hashlib.sha256(text.encode('utf-8')).hexdigest())
+        self.assertEqual(att['file'], '附件1.docx')
+        self.assertEqual(att['content_hash'], hashlib.sha256((folder / '附件1.docx').read_bytes()).hexdigest())
         self.assertEqual(att['attachment_class'], 'form')
         self.assertEqual(att['title'], '差旅示例办法 附件1 出差申请单')
         for f in pkg.rglob('*.docx'):
@@ -677,6 +679,16 @@ class PackageTest(unittest.TestCase):
         pkg2 = self.redact_and_pack()
         m2 = json.loads((pkg2 / '财务' / '差旅示例办法' / 'manifest.json').read_text(encoding='utf-8'))
         self.assertEqual([d['content_hash'] for d in m2['documents']], [d['content_hash'] for d in m['documents']])
+
+    def test_package_can_upload_redacted_body_docx(self):
+        import json
+        pkg = self.redact_and_pack('--files', 'redacted')
+        folder = pkg / '财务' / '差旅示例办法'
+        body = json.loads((folder / 'manifest.json').read_text(encoding='utf-8'))['documents'][0]
+        red_docx = self.run_dir / '脱敏文件' / '财务' / '差旅示例办法.docx'
+        self.assertEqual(body['file'], '正文.docx')
+        self.assertEqual(body['content_hash'], hashlib.sha256(red_docx.read_bytes()).hexdigest())
+        self.assertEqual((folder / '正文.docx').read_bytes(), red_docx.read_bytes())
 
     def test_package_can_upload_originals(self):
         import json
@@ -728,8 +740,20 @@ class PackageTest(unittest.TestCase):
         self.assertIsNone(rp.rejected)
         importer.apply_row(api, rp)
         self.assertEqual(len(api.rows['brightrule_policy_document']), 2)
+        body_doc, att_doc = sorted(api.rows['brightrule_policy_document'], key=lambda d: d['sort_no'])
+        self.assertNotIn('original_file', body_doc)        # 正文只进 Markdown
+        self.assertIn(att_doc['original_file'], api.files)  # 附件带脱敏后的 docx
         self.assertEqual(api.rows['brightrule_policy'][0]['category'], 'finance')
         # 再来一次：无事可做
+        self.assertEqual(importer.plan_row(api, pkg, row, []).steps, [])
+        # 早先正文也传了文件：换成默认打包后再导入，去掉正文文件；现行版本也可以（文字没变）
+        body_doc['original_file'], body_doc['content_hash'] = 'old-file', 'old-hash'
+        api.rows['brightrule_policy_version'][0]['version_status'] = 'current'
+        rp = importer.plan_row(api, pkg, row, [])
+        self.assertIsNone(rp.rejected)
+        self.assertIn('去掉文件', ' '.join(rp.actions))
+        importer.apply_row(api, rp)
+        self.assertIsNone(body_doc['original_file'])
         self.assertEqual(importer.plan_row(api, pkg, row, []).steps, [])
         # 设为现行后，内容变了就拒绝
         api.rows['brightrule_policy_version'][0]['version_status'] = 'current'

@@ -34,7 +34,8 @@ from lxml import etree
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from convert import CONVERTIBLE, has_docx_sibling  # noqa: E402
-from docx2md import attachment_docx, document_markdown, split_document  # noqa: E402
+from docx2md import NON_TEXT_MARKERS, attachment_docx, document_markdown, split_document  # noqa: E402
+import pdf_ocr  # noqa: E402
 import mdstats  # noqa: E402
 
 # ── Word XML 命名空间 ──────────────────────────────────────────────────────
@@ -291,6 +292,13 @@ class FileResult:
     leaks: List[str] = field(default_factory=list)
     error: Optional[str] = None
     warnings: List[str] = field(default_factory=list)
+    ocr: bool = False   # 扫描版 PDF：文字是识别出来的，只有 .md
+    # 转 Markdown 时丢掉的非文字内容：{'正文' 或附件名: {'图片': 3, '图表': 1, …}}
+    non_text: Dict[str, Dict[str, int]] = field(default_factory=dict)
+
+
+def non_text_counts(md: str) -> Dict[str, int]:
+    return {name: md.count(mark) for mark, name in NON_TEXT_MARKERS.items() if mark in md}
 
 
 def _parse(data: bytes) -> etree._Element:
@@ -577,6 +585,10 @@ def process_docx(src: Path, dst: Path, red: Redactor, orig_md: Optional[Path] = 
         if md_out is not None:
             texts[dst.with_suffix('.md').name] = md_out
             texts.update((f'{a.name}.md', md) for a, md in att_md)
+            for part, md in [('正文', md_out)] + [(a.name, md) for a, md in att_md]:
+                counts = non_text_counts(md)
+                if counts:
+                    result.non_text[part] = counts
     try:
         attachments = split_document(_parse(out['word/document.xml']))[1] if split and 'word/document.xml' in out else []
     except Exception as e:
@@ -621,6 +633,37 @@ def process_docx(src: Path, dst: Path, red: Redactor, orig_md: Optional[Path] = 
             attachment_dir(orig_md).mkdir(parents=True, exist_ok=True)
             for a, md in orig_att:
                 (attachment_dir(orig_md) / f'{a.name}.md').write_text(md, encoding='utf-8')
+    return result
+
+
+OCR_NOTE = '扫描件，文字由 OCR 识别：可能有错字，识别错的名称词典匹配不上会漏脱敏，导入前请人工核对 .md'
+
+
+def process_pdf(src: Path, dst: Path, red: Redactor, orig_md: Optional[Path] = None, ocr=None) -> FileResult:
+    """扫描版 PDF：识别文字 → 整理成 Markdown → 按词典脱敏 → 泄漏复查。只输出脱敏后的 .md（dst），不输出 PDF。"""
+    result = FileResult(source=src, ocr=True)
+    pages = (ocr or pdf_ocr.ocr_pdf)(src)
+    original = pdf_ocr.lines_to_markdown(pages)
+    if not original.strip():
+        result.error = '没有识别出文字'
+        return result
+    redacted, hits = red.redact_string(original)
+    result.hits = [('OCR 正文', h) for h in hits]
+    replacements = {t.replacement for t in red.terms}
+    result.suspects = list(dict.fromkeys(suspects_in(redacted, replacements)))
+    for t in red.leaked_terms(redacted):
+        result.leaks.append(f'{dst.name}: 词典原文「{t.original}」')
+    for p in red.patterns:
+        m = p.regex.search(redacted)
+        if m:
+            result.leaks.append(f'{dst.name}: 规则「{p.name}」命中 {m.group(0)}')
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_text(redacted, encoding='utf-8')
+    result.output = dst
+    if orig_md is not None:
+        orig_md.parent.mkdir(parents=True, exist_ok=True)
+        orig_md.write_text(original, encoding='utf-8')
+    result.warnings.append(OCR_NOTE)
     return result
 
 
@@ -704,7 +747,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     sources = sorted(p for p in args.input.rglob('*') if p.is_file() and not p.name.startswith(('~$', '.')))
     # 旁边已有同名 .docx 的 .doc（就地转换的结果）只处理 .docx，不算跳过
-    skipped = [p for p in sources if p.suffix.lower() != '.docx' and not has_docx_sibling(p)]
+    ocr_unavailable = pdf_ocr.unavailable_reason()
+    # 扫描版 PDF：旁边有同名 .docx 的用 .docx；能识别（Mac）时走 OCR，否则跳过并说明原因
+    pdfs = [p for p in sources if p.suffix.lower() == '.pdf' and not p.with_suffix('.docx').exists()]
+    skipped = [p for p in sources if p.suffix.lower() != '.docx' and not has_docx_sibling(p)
+               and not (p.suffix.lower() == '.pdf' and (p.with_suffix('.docx').exists() or not ocr_unavailable))]
     jobs = []
     for src in sources:
         if src.suffix.lower() != '.docx':
@@ -714,7 +761,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         new_parent = Path(*[red.redact_string(part)[0] for part in rel.parent.parts]) if rel.parent.parts else Path()
         orig_md = None if args.no_md else internal / '原件md' / rel.with_suffix('.md')
         jobs.append((src, docs_dir / new_parent / (new_stem + '.docx'), orig_md))
-    clashes = [d for d, n in Counter(d for _s, d, _m in jobs).items() if n > 1]
+    pdf_jobs = []
+    if not ocr_unavailable:
+        for src in pdfs:
+            rel = src.relative_to(args.input)
+            new_stem, _ = red.redact_string(rel.stem)
+            new_parent = Path(*[red.redact_string(part)[0] for part in rel.parent.parts]) if rel.parent.parts else Path()
+            pdf_jobs.append((src, docs_dir / new_parent / (new_stem + '.md'), internal / '原件md' / rel.with_suffix('.md')))
+    clashes = [d for d, n in Counter([d for _s, d, _m in jobs] + [d.with_suffix('.docx') for _s, d, _m in pdf_jobs]).items()
+               if n > 1]
     if clashes:
         raise SystemExit('以下输出文件名在脱敏后重名（不同原件被替换成同一个名字），请调整词典后重试：\n'
                          + '\n'.join(f'  {c}' for c in clashes))
@@ -732,6 +787,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         for n, job in enumerate(jobs, start=1):
             results.append(_worker(*job))
             _progress(n, len(jobs), started)
+    if pdf_jobs:
+        print(f'识别扫描版 PDF {len(pdf_jobs)} 个（macOS 文字识别，每页几秒）……')
+        for n, (src, dst, orig) in enumerate(pdf_jobs, start=1):
+            try:
+                results.append(process_pdf(src, dst, red, None if args.no_md else orig))
+            except Exception as e:  # 一个文件出错不影响其他文件
+                results.append(FileResult(source=src, ocr=True, error=f'OCR 失败（{_where(e)}）'))
+            print(f'  [{n}/{len(pdf_jobs)}] {src.relative_to(args.input)}')
     results.sort(key=lambda r: str(r.source))
     elapsed = time.monotonic() - started
 
@@ -740,6 +803,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     write_manifest(internal / '文件清单.json', results, args.input, docs_dir)
     write_summary(internal / '替换汇总.csv', summary)
     write_report(internal / '报告.md', results, skipped, args, out_root, now, len(terms), len(patterns), summary)
+    nt_files = write_non_text(out_root, results, docs_dir)
 
     failed = [r for r in results if r.error or r.leaks]
     n_att = sum(len(r.attachments) for r in results)
@@ -747,10 +811,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     dict_hits = sum(s.count for s in dict_rows)
     rule_hits = sum(s.count for s in summary if s.source == '规则')
     unused = [s for s in dict_rows if s.count == 0]
-    print(f'处理 {len(results)} 个 .docx（{elapsed:.1f} 秒）'
+    n_ocr = sum(1 for r in results if r.ocr)
+    print(f'处理 {len(results) - n_ocr} 个 .docx' + (f'、{n_ocr} 个扫描版 PDF' if n_ocr else '') + f'（{elapsed:.1f} 秒）'
           + f'，跳过 {len(skipped)} 个其他文件，{len(failed)} 个需处理。')
     print(f'共替换 {dict_hits + rule_hits} 处：词典 {dict_hits} 处（{len(dict_rows) - len(unused)}/{len(dict_rows)} 个词条命中），'
           f'格式规则 {rule_hits} 处。' + (f'{len(unused)} 个词条未命中，见报告。' if unused else ''))
+    if nt_files:
+        total_nt = sum(sum(c.values()) for r in results for c in r.non_text.values())
+        print(f'{nt_files} 份含图片等非文字内容（共 {total_nt} 处，转 Markdown 时没有转成文字），见 {out_root / "非文字内容统计.csv"}')
+    if n_ocr:
+        print(f'{n_ocr} 个扫描版 PDF 只输出脱敏后的 .md；文字由 OCR 识别，可能有错字，导入前请人工核对（报告里已标出）。')
     if n_att:
         print(f'拆出附件 {n_att} 个（{sum(1 for r in results if r.attachments)} 个文件有附件），在各文件旁的「…-附件」文件夹里。')
     print(f'脱敏文件：{docs_dir}' + ('' if args.no_md else '（.docx 与同名 .md）'))
@@ -773,6 +843,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print(f'  ……共 {len(skipped)} 个，完整列表见报告')
         if any(p.suffix.lower() in CONVERTIBLE for p in skipped):
             print('  .doc / .rtf / .wps 等旧格式：先运行 ./run.sh convert 转成同名 .docx，再重新脱敏。')
+        if ocr_unavailable and any(p.suffix.lower() == '.pdf' for p in skipped):
+            print(f'  .pdf：{ocr_unavailable}。')
     if failed:
         print('\n需处理的文件：')
         for r in failed[:15]:
@@ -827,8 +899,41 @@ def write_manifest(path: Path, results: List[FileResult], input_dir: Path, docs_
         'error': r.error,
         'leaks': len(r.leaks),
         'attachments': len(r.attachments),
+        'ocr': r.ocr,
     } for r in results]
     path.write_text(json.dumps({'files': rows}, ensure_ascii=False, indent=1), encoding='utf-8')
+
+
+def write_non_text(out_root: Path, results: List[FileResult], docs_dir: Path) -> int:
+    """哪些文件里有图片、图表、SmartArt、公式、嵌入对象（转 Markdown 时只留了标记，内容丢了），按数量从多到少。
+    文件名用脱敏后的路径，和「脱敏文件」一样可以外发。返回涉及的文件数。"""
+    kinds = list(NON_TEXT_MARKERS.values())
+    rows = []
+    for r in results:
+        if not r.non_text or not r.output:
+            continue
+        rel = r.output.relative_to(docs_dir).as_posix()
+        for part, counts in r.non_text.items():
+            rows.append((rel, part, [counts.get(k, 0) for k in kinds]))
+    if not rows:
+        return 0
+    per_file = Counter()
+    for rel, _part, nums in rows:
+        per_file[rel] += sum(nums)
+    rows.sort(key=lambda t: (-per_file[t[0]], t[0], t[1] != '正文', t[1]))
+    with (out_root / '非文字内容统计.csv').open('w', newline='', encoding='utf-8-sig') as f:
+        wr = csv.writer(f)
+        wr.writerow(['文件', '位置'] + kinds + ['合计'])
+        for rel, part, nums in rows:
+            wr.writerow([rel, part] + nums + [sum(nums)])
+    lines = ['# 非文字内容统计', '',
+             f'{len(per_file)} 份文件含图片、图表、SmartArt、公式或嵌入对象，共 {sum(per_file.values())} 处。'
+             '转 Markdown 时这些内容只在原位置留了「（图片）」等标记，问询时模型看不到；流程图、扫描的表格、'
+             '带数字的图表等重要内容，请对照原件写成文字。', '',
+             '| 文件 | 位置 | ' + ' | '.join(kinds) + ' | 合计 |', '|---|---|' + '---:|' * (len(kinds) + 1)]
+    lines += [f'| {rel} | {part} | ' + ' | '.join(str(n) for n in nums) + f' | {sum(nums)} |' for rel, part, nums in rows]
+    (out_root / '非文字内容统计.md').write_text('\n'.join(lines) + '\n', encoding='utf-8')
+    return len(per_file)
 
 
 def write_mapping(path: Path, results: List[FileResult], input_dir: Path) -> None:
@@ -880,7 +985,7 @@ def write_report(path: Path, results: List[FileResult], skipped: List[Path], arg
         lines += [f'- {p.relative_to(args.input)}' for p in skipped] + ['']
     for r in results:
         rel = r.source.relative_to(args.input)
-        status = '❌ 需处理' if (r.error or r.leaks) else '✅ 通过复查'
+        status = '❌ 需处理' if (r.error or r.leaks) else ('⚠️ OCR 识别，需人工核对' if r.ocr else '✅ 通过复查')
         lines += [f'## {rel} — {status}', '']
         if r.error:
             lines += [f'- 错误：{r.error}', '']
@@ -896,6 +1001,9 @@ def write_report(path: Path, results: List[FileResult], skipped: List[Path], arg
         if r.leaks:
             lines.append('- **泄漏复查未通过**：')
             lines += [f'  - {x}' for x in r.leaks]
+        if r.non_text:
+            lines.append('- 转 Markdown 时丢失的非文字内容：' + '；'.join(
+                f'{part} ' + '、'.join(f'{k} {v} 处' for k, v in c.items()) for part, c in r.non_text.items()))
         if r.media or r.embeddings:
             lines.append(f'- **需人工检查**：图片 {len(r.media)} 个、嵌入对象 {len(r.embeddings)} 个（工具不处理图片和嵌入文件里的文字）')
         if r.attachments:

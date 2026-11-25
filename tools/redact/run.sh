@@ -8,12 +8,18 @@
 # 6. ./run.sh import --package 导入包/<时间> --url https://系统地址 --login [--apply]   导入（先预演，加 --apply 才写入）
 # 7. ./run.sh publish --package 导入包/<时间> --url https://系统地址 --login [--apply]  把导入的草稿版本批量设为现行
 # 8. ./run.sh remove --url https://系统地址 --login (--package 导入包/<时间> | --samples | --policy-no 编号 | --title 名称) [--apply]  删除制度及其版本、文档、条款
+# 9. ./run.sh meta --input 原件目录   扫描制度信息表等元数据，汇总成 Excel（只留本地）
 set -euo pipefail
 cd "$(dirname "$0")"
 if [ ! -x .venv/bin/python ]; then
   echo "首次运行：安装依赖（lxml）……"
   python3 -m venv .venv
   .venv/bin/pip install --quiet --upgrade pip
+  .venv/bin/pip install --quiet -r requirements.txt
+fi
+# 依赖有新增时（如 meta 用的 openpyxl、Mac 上识别扫描版 PDF 用的 Vision）补装一次
+if ! .venv/bin/python -c 'import sys, lxml, openpyxl; sys.platform != "darwin" or __import__("Vision") and __import__("Quartz")' 2>/dev/null; then
+  echo "安装新增的依赖……"
   .venv/bin/pip install --quiet -r requirements.txt
 fi
 # ./run.sh convert …  .doc 等旧格式批量转成 .docx
@@ -25,6 +31,7 @@ case "${1:-}" in
   stats) shift; exec .venv/bin/python mdstats.py "$@" ;;
   package) shift; exec .venv/bin/python package.py "$@" ;;
   import) shift; exec .venv/bin/python importer.py "$@" ;;
+  meta) shift; exec .venv/bin/python meta.py "$@" ;;
   publish) shift; exec .venv/bin/python publish.py "$@" ;;
   remove) shift; exec .venv/bin/python remove.py "$@" ;;
 esac

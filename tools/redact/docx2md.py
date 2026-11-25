@@ -532,6 +532,14 @@ def _cn_int(s: str) -> int:
     return n.get(s[0], 0) * 10 + n.get(s[-1], 0) if len(s) == 2 else n.get(s, 0)
 
 
+def _blank(p: etree._Element) -> bool:
+    """没有文字、也没有图片 / 图表 / 公式 / 嵌入对象的段落。"""
+    if _plain(p):
+        return False
+    visual = {w('drawing'), w('pict'), w('object'), f'{{{MATH}}}oMath', f'{{{MATH}}}oMathPara'}
+    return not any(el.tag in visual for el in p.iter())
+
+
 def split_document(doc: etree._Element) -> Tuple[List[etree._Element], List[Attachment], List[etree._Element]]:
     """把正文的顶层块分成：正文、各附件、文末版记。没有附件时附件列表为空、版记为空。"""
     body = doc.find(w('body'))
@@ -549,8 +557,8 @@ def split_document(doc: etree._Element) -> Tuple[List[etree._Element], List[Atta
         if blocks[i].tag == w('p') and COLOPHON.search(_plain(blocks[i])):
             end_all = i
             break
-    # 版记前面成串的空段落（排版用的空行）也归版记
-    while end_all > starts[-1][0] + 1 and blocks[end_all - 1].tag == w('p') and not _plain(blocks[end_all - 1]):
+    # 版记前面成串的空段落（排版用的空行）也归版记；只有图片、图表、公式的段落不算空（如最后一个附件是流程图）
+    while end_all > starts[-1][0] + 1 and blocks[end_all - 1].tag == w('p') and _blank(blocks[end_all - 1]):
         end_all -= 1
     bounds = [s for s, _n, _k in starts[1:]] + [end_all]
     attachments = []

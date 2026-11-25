@@ -316,7 +316,8 @@ def pack_one(entry: Dict[str, object], docs: Path, originals: Optional[Path], ou
         packed.rejected = '没有脱敏后的 .md（脱敏时用了 --no-md？）'
         return packed
     parts = None
-    if originals is not None:
+    ocr = bool(entry.get('ocr'))   # 扫描版 PDF：只有脱敏后的 .md，没有 docx
+    if originals is not None and not ocr:
         src = originals / source
         if not src.exists():
             packed.rejected = f'原件目录里找不到 {source}'
@@ -331,14 +332,16 @@ def pack_one(entry: Dict[str, object], docs: Path, originals: Optional[Path], ou
     if meta.get('_from'):
         packed.problems.append('请核对：' + meta.pop('_from'))
     index = article_index(body)
-    packed.problems = article_problems(index)
+    packed.problems += article_problems(index)
+    if ocr:
+        packed.problems.insert(0, '扫描件 OCR 识别：可能有错字、漏脱敏，导入前请人工核对正文')
     if not index:
         packed.problems.append('没有识别到「第X条」：作答时只能整份或按段落检索，答复无法引用到条')
 
     folder = out_root / packed.folder
     folder.mkdir(parents=True, exist_ok=True)
     (folder / '正文.md').write_text(body, encoding='utf-8')
-    if files in ('none', 'attachments'):
+    if files in ('none', 'attachments') or ocr:
         body_file, body_hash = None, sha256(body.encode('utf-8'))
     else:
         body_bytes = (originals / source).read_bytes() if files == 'original' else red_docx.read_bytes()

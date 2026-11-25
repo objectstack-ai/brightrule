@@ -862,6 +862,176 @@ class PackageTest(unittest.TestCase):
         # 缺名称仍然拒绝
         self.assertIn('制度名称', importer.plan_row(api, pkg, dict(row3, 制度名称=''), []).rejected)
 
+    def _fake_system(self):
+        """内存里的假系统：import / remove 的 main() 都连它。"""
+        import importer, remove
+
+        class Fake:
+            mode = 'session'
+
+            def __init__(self):
+                self.rows, self.n = {}, 0
+
+            def find(self, obj, where, select=None):
+                return [dict(r) for r in self.rows.get(obj, []) if all(r.get(k) == v for k, v in where.items())]
+
+            def create(self, obj, row):
+                self.n += 1
+                row = {**row, 'id': f'id{self.n}'}
+                if obj == 'brightrule_policy_version':
+                    row.setdefault('version_status', 'draft')
+                self.rows.setdefault(obj, []).append(row)
+                return row
+
+            def update(self, obj, rid, row):
+                for r in self.rows.get(obj, []):
+                    if r['id'] == rid:
+                        r.update(row)
+
+            def delete(self, obj, rid):
+                self.rows[obj] = [r for r in self.rows.get(obj, []) if r['id'] != rid]
+                if obj == 'brightrule_policy_version':   # 附件随版本级联删除
+                    self.rows['brightrule_policy_attachment'] = [
+                        r for r in self.rows.get('brightrule_policy_attachment', []) if r.get('policy_version') != rid]
+
+            def upload(self, *a, **k):
+                return 'file'
+
+            def category_options(self):
+                return []
+
+        fake = Fake()
+        self._saved = (importer.Api, remove.Api)
+        importer.Api = remove.Api = lambda *a, **k: fake
+        self.addCleanup(lambda: setattr(importer, 'Api', self._saved[0]) or setattr(remove, 'Api', self._saved[1]))
+        return fake
+
+    def test_import_records_ids_and_remove_uses_them(self):
+        import json, importer, remove
+        pkg = self.redact_and_pack()
+        fake = self._fake_system()
+        url = 'http://test/'
+        importer.main(['--package', str(pkg), '--url', url, '--apply'])
+        rec = json.loads((pkg / importer.RECORD_FILE).read_text(encoding='utf-8'))['http://test']
+        (entry,) = rec.values()
+        self.assertTrue(entry['created_policy'] and entry['created_version'])
+        self.assertEqual(entry['policy_id'], fake.rows['brightrule_policy'][0]['id'])
+        # 重跑：无变化，记录不变（仍是这个包新建的）
+        importer.main(['--package', str(pkg), '--url', url, '--apply'])
+        self.assertEqual(json.loads((pkg / importer.RECORD_FILE).read_text(encoding='utf-8'))['http://test'], rec)
+        # remove 按记录直接删：制度、版本、附件全没了，记录清空
+        remove.main(['--url', url, '--package', str(pkg), '--apply'])
+        self.assertEqual(fake.rows['brightrule_policy'], [])
+        self.assertEqual(fake.rows['brightrule_policy_version'], [])
+        self.assertEqual(fake.rows.get('brightrule_policy_attachment', []), [])
+        self.assertNotIn('http://test', json.loads((pkg / importer.RECORD_FILE).read_text(encoding='utf-8')))
+
+    def test_remove_only_deletes_the_version_added_to_an_existing_policy(self):
+        import importer, remove
+        pkg = self.redact_and_pack()
+        fake = self._fake_system()
+        row = importer.read_sheet(pkg)[0]
+        old = fake.create('brightrule_policy', {'title': row['制度名称'], 'policy_no': row['制度编号'], 'status': 'published'})
+        fake.create('brightrule_policy_version', {'policy': old['id'], 'version_no': '旧版', 'version_status': 'current'})
+        importer.main(['--package', str(pkg), '--url', 'http://test', '--apply'])
+        entry = importer.load_record(pkg, 'http://test')[row['包内目录']]
+        self.assertFalse(entry['created_policy'])
+        self.assertTrue(entry['created_version'])
+        remove.main(['--url', 'http://test', '--package', str(pkg), '--apply'])
+        self.assertEqual([p['id'] for p in fake.rows['brightrule_policy']], [old['id']])          # 原有制度还在
+        self.assertEqual([v['version_no'] for v in fake.rows['brightrule_policy_version']], ['旧版'])  # 只删了新加的版本
+
+    def test_meta_scans_info_tables_into_excel(self):
+        import meta
+        from openpyxl import load_workbook
+        # 第二份：信息表用「归口部门」、多一个「废止日期」，编码与第一份重复；第三份没有信息表
+        _policy_docx(self.src / '财务' / '差旅示例办法.docx')
+        doc2 = self.src / '行政' / '会议示例规定.docx'
+        _policy_docx(doc2)
+        with zipfile.ZipFile(doc2) as z:
+            parts = {n: z.read(n) for n in z.namelist()}
+        xml = parts['word/document.xml'].decode()
+        xml = xml.replace('责任部门', '归口部门').replace('制度类别', '废止日期', 1).replace('财务类', '/')
+        with zipfile.ZipFile(doc2, 'w') as z:
+            for n, b in parts.items():
+                z.writestr(n, xml if n == 'word/document.xml' else b)
+        (self.src / '旧.doc').write_bytes(b'x')
+        out = self.tmp / '元数据.xlsx'
+        meta.main(['--input', str(self.src), '--output', str(out)])
+        wb = load_workbook(out)
+        rows = list(wb['元数据'].iter_rows(values_only=True))
+        head, data = rows[0], {r[0]: dict(zip(rows[0], r)) for r in rows[1:]}
+        first = data[str(Path('财务') / '差旅示例办法.docx')]
+        self.assertEqual(first['制度编码'], 'HD-CW-001')
+        self.assertEqual(first['生效日期'], '2025-03-01')
+        self.assertEqual(first['生效日期（原文）'], '2025年3月1日')
+        self.assertEqual(first['责任部门'], '财务部')
+        self.assertEqual(first['附件数'], '1')
+        second = data[str(Path('行政') / '会议示例规定.docx')]
+        self.assertEqual(second['责任部门'], '财务部')          # 「归口部门」归入常用列
+        self.assertIn('废止日期', head)                        # 其他字段自动加列
+        self.assertIn(second['制度类别'], (None, ''))          # 找不到 / 写「/」的空着
+        problems = [r for r in wb['问题'].iter_rows(values_only=True)][1:]
+        text = ' '.join(f'{a} {b}' for a, b in problems)
+        self.assertIn('写法不同：「归口部门」', text)
+        self.assertIn('制度编码「HD-CW-001」重复', text)
+        self.assertIn('旧格式', text)
+        self.assertNotIn('缺', text)                          # 找不到的字段不算问题
+        stats = {r[0]: r[1] for r in list(wb['字段统计'].iter_rows(values_only=True))[1:]}
+        self.assertEqual(stats['制度编码'], 2)
+
+    def test_scanned_pdf_is_ocrd_redacted_and_flagged(self):
+        import json, package, pdf_ocr
+        from pdf_ocr import Line
+        (self.src / '扫描').mkdir()
+        (self.src / '扫描' / '华东示例集团收费标准.pdf').write_bytes(b'%PDF-1.4 fake')
+        pages = [[Line('华东示例集团收费标准', 0.1, 0.5), Line('第一章 总则', 0.1, 0.3),
+                  Line('第一条 为规范华东示例集团业务收费，根据有关规定，结合', 0.1, 0.9), Line('实际，制定本标准。', 0.1, 0.4),
+                  Line('- 1 -', 0.45, 0.55)],
+                 [Line('第二条 本标准自2025年5月26日起施行。', 0.1, 0.6)]]
+        saved = (pdf_ocr.unavailable_reason, pdf_ocr.ocr_pdf)
+        pdf_ocr.unavailable_reason, pdf_ocr.ocr_pdf = (lambda: None), (lambda path: pages)
+        self.addCleanup(lambda: (setattr(pdf_ocr, 'unavailable_reason', saved[0]), setattr(pdf_ocr, 'ocr_pdf', saved[1])))
+        pkg = self.redact_and_pack()
+        docs = self.run_dir / '脱敏文件' / '扫描'
+        mds = list(docs.glob('*.md'))
+        self.assertEqual(len(mds), 1)
+        self.assertEqual(list(docs.glob('*.pdf')) + list(docs.glob('*.docx')), [])   # 只输出 .md
+        md = mds[0].read_text(encoding='utf-8')
+        self.assertNotIn('华东示例', md)
+        self.assertIn('**第一条** 为规范', md)
+        self.assertIn('结合实际，制定本标准。', md)                 # 跨行拼回一段
+        self.assertNotIn('- 1 -', md)                                # 页码去掉
+        report = (self.run_dir / '内部留存-勿外发' / '报告.md').read_text(encoding='utf-8')
+        self.assertIn('OCR 识别，需人工核对', report)
+        listing = json.loads((self.run_dir / '内部留存-勿外发' / '文件清单.json').read_text(encoding='utf-8'))
+        self.assertTrue(any(f['ocr'] and f['output'].endswith('.md') for f in listing['files']))
+        sheet = (pkg / '批次清单.csv').read_text(encoding='utf-8-sig')
+        self.assertIn('扫描件 OCR 识别', sheet)
+        self.assertEqual(list(pkg.rglob('正文.docx')), [])
+
+    def test_pdf_is_skipped_with_a_reason_when_ocr_is_unavailable(self):
+        import pdf_ocr
+        (self.src / '扫描.pdf').write_bytes(b'%PDF-1.4 fake')
+        saved = pdf_ocr.unavailable_reason
+        pdf_ocr.unavailable_reason = lambda: '扫描版 PDF 需要在 Mac 上运行'
+        self.addCleanup(lambda: setattr(pdf_ocr, 'unavailable_reason', saved))
+        self.redact_and_pack()
+        report = (self.run_dir / '内部留存-勿外发' / '报告.md').read_text(encoding='utf-8')
+        self.assertIn('扫描.pdf', report)   # 列在跳过的文件里
+
+    def test_non_text_content_is_counted_per_file(self):
+        import csv
+        _policy_docx(self.src / '财务' / '差旅示例办法.docx', with_images=True)
+        self.redact_and_pack()
+        path = self.run_dir / '非文字内容统计.csv'
+        with path.open(encoding='utf-8-sig') as f:
+            rows = list(csv.DictReader(f))
+        body = next(r for r in rows if r['位置'] == '正文')
+        self.assertEqual((body['图片'], body['图表'], body['公式']), ('1', '1', '1'))
+        self.assertTrue(any(r['位置'] != '正文' and r['图片'] == '1' for r in rows))   # 附件2 的图片
+        self.assertNotIn('华东示例', path.read_text(encoding='utf-8-sig'))            # 用脱敏后的文件名
+
     def test_package_accepts_the_docs_folder_and_import_points_to_package(self):
         import importer, package
         out = self.tmp / '结果'

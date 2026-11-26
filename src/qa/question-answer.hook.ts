@@ -23,8 +23,8 @@ const RETRIEVE_TOP_K = 12;
  * to the asker's own context:
  *   - permission: a clause the asker cannot read is never quoted, whatever it
  *     scored;
- *   - currency: only `is_current` clauses answer, so a superseded version's
- *     text never reaches an employee.
+ *   - currency: only `is_current` clauses answer, so the text of a policy that
+ *     is not published never reaches an employee.
  * Retrieval itself runs elevated (it ranks; it does not disclose), and the
  * read-back is what decides what may be disclosed.
  *

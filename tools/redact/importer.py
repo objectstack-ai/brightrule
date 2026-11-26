@@ -1,24 +1,27 @@
 #!/usr/bin/env python3
-"""导入：把导入包写进 BrightRule 系统（brightrule#13）。在本机运行，经系统的 HTTPS 接口写入，云环境同样适用。
+"""导入：把导入包写进 BrightRule 系统（brightrule#13、#45）。在本机运行，经系统的 HTTPS 接口写入，云环境同样适用。
 
 用法：
     export BRIGHTRULE_API_KEY=…            # 系统里生成的 API Key（制度管理员）
     python3 importer.py --package 导入包/<时间> --url https://<系统地址>            # 预演：只列计划，不写入
     python3 importer.py --package 导入包/<时间> --url https://<系统地址> --apply    # 写入
 
-按批次清单里「导入 = 是」的行，依次：
-    制度（按制度编号找；清单里没有编号的按名称找；都找不到就新建为草稿）
-    → 版本（按制度 + 版本号找，没有就新建为草稿）；正文写在版本上（正文、条号索引、字数、哈希、正文原件）
-    → 附件（按序号找：没有就上传文件并新建；内容哈希、文字、标题或分类变了就更新；一样就跳过）
+系统里没有版本：制度是一张扁平表，正文写在制度上，唯一的子表是制度附件。按批次清单里「导入 = 是」的行，依次：
+    制度（按制度编号找；清单里没有编号的按名称找；都找不到就新建为草稿）：
+        制度信息表的各栏（文号、制度层级、发文单位、归口部门、协同部门、审议主体、决议主体、关联制度 / 文件、
+        类别、生效日期）和正文（正文、条号索引、字数、哈希、含图片、正文原件）都写在制度上；
+    → 制度附件（挂在制度下，按序号找：没有就上传文件并新建；内容哈希、文字、标题、含图片变了就更新；一样就跳过）；
+    → 相关制度：全部写完后，「关联制度 / 文件」里与系统中制度名称完全一致的，自动填进「相关制度」。
     上传的文件是导入包里有的 附件N.docx（及 正文.docx）：默认都不传文件，只进 Markdown，见 package --files。
     导入包里没有文件的正文或附件，系统里原有的文件会被去掉。
 规则：
     - 同一批导两次，结果不变（全部跳过）；
-    - 版本已是「现行」而内容有变化（文档增减、正文、标题或分类不同）：整行拒绝，请用新版本号导入；
-      只是上传的文件变了（如正文不再上传 docx）可以更新；
+    - 修订就是覆盖：制度已发布、正文有变化时直接更新正文，不保留旧正文（原件文件即存档），报告里提示；
     - 只读导入包；路径里有「内部留存」的一律拒绝；
-    - 制度名称、版本号缺任何一项，这一行拒绝；制度编号、生效日期可以为空（原文没有就不填，导入后在页面上补；空值不会覆盖页面上补的）；
-    - 导入的版本都是草稿；核对后由管理员在系统里设为现行。
+    - 制度名称缺失，这一行拒绝；制度编号、文号、生效日期等可以为空（原文没有就不填，导入后在页面上补；空值不会覆盖页面上补的）；
+    - 「图片待核对」是人工勾选的，导入不动它；
+    - 新建的制度是草稿；核对后用 publish 命令或在页面上发布。
+    - 写入时在导入包里留 导入记录.json（按系统地址分开）：每份制度的 id、是不是这个包新建的；remove --package 按它删。
 认证（三选一）：
     --login                    运行时输入账号、密码登录（密码不回显、不保存）。上传文件只认登录会话；
                                只能单点登录的环境没有密码，用 BRIGHTRULE_API_KEY（默认导入包不传文件，够用）；
@@ -43,10 +46,11 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-VERSION_FIELDS = 'id,title,version_no,version_status,effective_date,body_md,content_hash,original_file'
-ATTACHMENT_FIELDS = 'id,sort_no,label,attachment_class,title,content_hash,body_md,original_file'
-# 正文写在版本上的字段（manifest 里正文那一项 → 版本）
-BODY_KEYS = ('body_md', 'article_index', 'text_chars', 'text_tokens', 'content_hash')
+ATTACHMENT_FIELDS = 'id,sort_no,label,title,content_hash,body_md,original_file,has_images'
+# 批次清单的列 → 制度字段（制度信息表照录；空的不写，不覆盖页面上补的）
+SHEET_FIELDS = (('文号', 'doc_no'), ('制度层级', 'policy_level'), ('发文单位', 'issuing_unit'), ('归口部门', 'department'),
+                ('协同部门', 'co_departments'), ('审议主体', 'review_body'), ('决议主体', 'decision_body'),
+                ('关联制度/文件', 'related_documents'), ('生效日期', 'effective_date'))
 DATE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
 # 系统里不能有图片：Markdown 里出现图片语法（![…](…)、<img、data:image）就拒绝整行
 IMAGE_IN_MD = re.compile(r'!\[[^\]]*\]\(|<img\b|data:image/', re.I)
@@ -187,13 +191,13 @@ class RowPlan:
     folder: str
     policy_no: str
     title: str
-    version_no: str
+    doc_no: str
     actions: List[str] = field(default_factory=list)
     rejected: Optional[str] = None
     notes: List[str] = field(default_factory=list)
     steps: List[Tuple] = field(default_factory=list)   # 写入时执行
-    policy_id: Optional[str] = None    # 预演时找到的已有记录
-    version_id: Optional[str] = None
+    policy_id: Optional[str] = None    # 预演时找到的已有记录；写入时新建的制度
+    related: str = ''                  # 「关联制度 / 文件」原文，写完后据此自动关联库内制度
 
 
 def read_sheet(package: Path) -> List[Dict[str, str]]:
@@ -222,15 +226,46 @@ def map_category(text: str, options: List[Tuple[str, str]]) -> Optional[str]:
     return max(hits)[1] if hits else None
 
 
-POLICY_SELECT = 'id,title,policy_no,department,issuing_unit,category,status'
+POLICY_SELECT = 'id,title,policy_no,department,issuing_unit,category,status,text_chars'
+# 导入比对用：制度信息表各栏 + 正文
+POLICY_IMPORT_SELECT = (POLICY_SELECT + ',doc_no,policy_level,co_departments,review_body,decision_body,related_documents,'
+                        'effective_date,body_md,content_hash,original_file,has_images')
 
 
-def find_policies(api: Api, policy_no: str, title: str) -> Tuple[List[Dict], str]:
+def find_policies(api: Api, policy_no: str, title: str, select: str = POLICY_SELECT) -> Tuple[List[Dict], str]:
     """批次清单一行对应的系统制度：有制度编号按编号找；没有按名称找（编号、生效日期可以之后在页面上补，
     补过的不会被清空，再导入也还能对上）。返回找到的记录和用于提示重复的说明。"""
     if policy_no:
-        return api.find('brightrule_policy', {'policy_no': policy_no}, POLICY_SELECT), f'制度编号都是 {policy_no}'
-    return api.find('brightrule_policy', {'title': title}, POLICY_SELECT), f'名称都是「{title}」'
+        return api.find('brightrule_policy', {'policy_no': policy_no}, select), f'制度编号都是 {policy_no}'
+    return api.find('brightrule_policy', {'title': title}, select), f'名称都是「{title}」'
+
+
+def related_titles(text: str) -> List[str]:
+    """「关联制度 / 文件」一栏里的名称：有书名号的取书名号里的，没有的按「、，；」和换行分开。去重，保持原顺序。"""
+    if not text:
+        return []
+    names = re.findall(r'《([^《》]+)》', text) if '《' in text else re.split(r'[、，,；;\n]+', text)
+    out: List[str] = []
+    for n in names:
+        n = re.sub(r'\s+', ' ', n).strip(' 　《》')
+        if n and n not in ('无', '/', '-', '—') and n not in out:
+            out.append(n)
+    return out
+
+
+def ref_ids(value) -> List[str]:
+    """多选查找字段的值 → id 列表（接口可能给 id，也可能给带 id 的记录；空值为 null 或 []）。"""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value) if value.startswith('[') else [value]
+        except ValueError:
+            value = [value]
+    out = []
+    for v in value or []:
+        v = v.get('id') if isinstance(v, dict) else v
+        if isinstance(v, str) and v:
+            out.append(v)
+    return out
 
 
 def open_package(path: Path) -> Path:
@@ -246,11 +281,18 @@ def open_package(path: Path) -> Path:
     return package
 
 
+def same_value(stored, value) -> bool:
+    """系统里的值和要写的值是否相同；日期只比前 10 位（接口可能带时间）。"""
+    if isinstance(value, str) and DATE.match(value) and isinstance(stored, str):
+        return stored[:10] == value
+    return stored == value
+
+
 def plan_row(api: Api, package: Path, row: Dict[str, str], options: List[Tuple[str, str]]) -> RowPlan:
-    rp = RowPlan(row.get('包内目录', ''), row.get('制度编号', ''), row.get('制度名称', ''), row.get('版本号', ''))
-    missing = [k for k in ('制度名称', '版本号') if not row.get(k)]
-    if missing:
-        rp.rejected = '批次清单缺 ' + '、'.join(missing)
+    rp = RowPlan(row.get('包内目录', ''), row.get('制度编号', ''), row.get('制度名称', ''), row.get('文号', ''),
+                 related=row.get('关联制度/文件', ''))
+    if not row.get('制度名称'):
+        rp.rejected = '批次清单缺 制度名称'
         return rp
     effective = row.get('生效日期') or None
     if effective and not DATE.match(effective):
@@ -263,10 +305,10 @@ def plan_row(api: Api, package: Path, row: Dict[str, str], options: List[Tuple[s
         rp.rejected = f'导入包里没有 {rp.folder}/manifest.json'
         return rp
 
-    policy_fields = {'title': row['制度名称']}
+    policy_fields: Dict[str, object] = {'title': row['制度名称']}
     if rp.policy_no:
         policy_fields['policy_no'] = rp.policy_no
-    for col, key in (('归口部门', 'department'), ('发文单位', 'issuing_unit')):
+    for col, key in SHEET_FIELDS:
         if row.get(col):
             policy_fields[key] = row[col]
     if row.get('制度类别'):
@@ -275,34 +317,6 @@ def plan_row(api: Api, package: Path, row: Dict[str, str], options: List[Tuple[s
             policy_fields['category'] = cat
         else:
             rp.notes.append(f'制度类别「{row["制度类别"]}」不在系统的选项里，没有填')
-
-    found, key = find_policies(api, rp.policy_no, rp.title)
-    if not rp.policy_no:
-        rp.notes.append('没有制度编号，按制度名称对应；导入后可在页面上补')
-    policy = found[0] if found else None
-    if len(found) > 1:
-        rp.rejected = f'系统里有 {len(found)} 份制度{key}，请先处理重复'
-        return rp
-    if policy is not None:
-        rp.policy_id = policy['id']
-    if policy is None:
-        rp.actions.append('新建制度（草稿）')
-        rp.steps.append(('create_policy', {**policy_fields, 'status': 'draft',
-                                           **({'effective_date': effective} if effective else {})}))
-    else:
-        changed = {k: v for k, v in policy_fields.items() if policy.get(k) != v}
-        if changed:
-            rp.actions.append('更新制度：' + '、'.join(changed))
-            rp.steps.append(('update_policy', policy['id'], changed))
-        else:
-            rp.actions.append('制度已存在，不变')
-
-    version = None
-    if policy is not None:
-        vs = api.find('brightrule_policy_version', {'policy': policy['id'], 'version_no': rp.version_no}, VERSION_FIELDS)
-        version = vs[0] if vs else None
-        rp.version_id = version['id'] if version else None
-    is_current = bool(version and version.get('version_status') == 'current')
 
     def read_md(doc: Dict) -> Optional[str]:
         return (folder / doc['md']).read_text(encoding='utf-8') if doc.get('md') else None
@@ -316,45 +330,54 @@ def plan_row(api: Api, package: Path, row: Dict[str, str], options: List[Tuple[s
         md = read_md(doc)
         if md and IMAGE_IN_MD.search(md):
             rp.rejected = f"{doc.get('md')} 里有图片（系统里不能有图片），请去掉后重新打包"
-            rp.steps = []
             return rp
-
-    changes: List[str] = []
-    content_changed = False      # 文字、标题、分类、附件增减；只换文件（如不再上传正文 docx）不算
-
-    # ── 正文 → 版本 ──
     body = next((d for d in docs if d['doc_kind'] == 'body'), None)
     if body is None:
         rp.rejected = '导入包里没有正文'
-        rp.steps = []
         return rp
     body_md = read_md(body)
     body_fields = {'body_md': body_md, 'article_index': body.get('article_index'), 'text_chars': body['text_chars'],
-                   'text_tokens': body['text_tokens'], 'content_hash': body['content_hash']}
+                   'text_tokens': body['text_tokens'], 'content_hash': body['content_hash'],
+                   'has_images': bool(body.get('has_images'))}
     body_file = file_of(body)
-    if version is None:
-        rp.actions.append(f'新建版本 {rp.version_no}（草稿，含正文）')
-        rp.steps.append(('create_version', {'title': f'{rp.title} {rp.version_no}', 'version_no': rp.version_no,
-                                            'version_status': 'draft',
-                                            **({'effective_date': effective} if effective else {}),
-                                            'change_note': f'导入批次 {package.name}', **body_fields}, body_file))
-        content_changed = True
-    else:
-        same_file = version.get('content_hash') == body['content_hash'] and (body_file is not None or not version.get('original_file'))
-        same_text = (version.get('body_md') or None) == body_md
-        if not (same_file and same_text):
-            what = [w for w, ok in (('文件' if body_file else '去掉文件', same_file), ('正文', same_text)) if not ok]
-            changes.append('正文：更新' + '、'.join(what))
-            content_changed = content_changed or not same_text
-            fields = dict(body_fields)
-            if body_file is None and version.get('original_file'):
-                fields['original_file'] = None
-            rp.steps.append(('update_version', version['id'], fields, None if same_file else body_file))
 
-    # ── 附件 ──
+    found, key = find_policies(api, rp.policy_no, rp.title, POLICY_IMPORT_SELECT)
+    if not rp.policy_no:
+        rp.notes.append('没有制度编号，按制度名称对应；导入后可在页面上补')
+    if len(found) > 1:
+        rp.rejected = f'系统里有 {len(found)} 份制度{key}，请先处理重复'
+        return rp
+    policy = found[0] if found else None
+
+    # ── 制度：信息表各栏 + 正文 ──
+    if policy is None:
+        rp.actions.append('新建制度（草稿，含正文）')
+        rp.steps.append(('create_policy', {**policy_fields, 'status': 'draft', **body_fields}, body_file))
+    else:
+        rp.policy_id = policy['id']
+        changed = {k: v for k, v in policy_fields.items() if not same_value(policy.get(k), v)}
+        same_file = policy.get('content_hash') == body['content_hash'] and (body_file is not None or not policy.get('original_file'))
+        same_text = (policy.get('body_md') or None) == body_md
+        same_images = bool(policy.get('has_images')) == body_fields['has_images']
+        update = dict(changed)
+        if changed:
+            rp.actions.append('更新制度信息：' + '、'.join(changed))
+        if not (same_file and same_text and same_images):
+            what = [w for w, ok in (('文件' if body_file else '去掉文件', same_file), ('正文', same_text),
+                                    ('含图片', same_images)) if not ok]
+            rp.actions.append('正文：更新' + '、'.join(what))
+            update.update(body_fields)
+            if body_file is None and policy.get('original_file'):
+                update['original_file'] = None
+            if not same_text and policy.get('status') == 'published':
+                rp.notes.append('制度已发布：正文直接覆盖，员工随即看到新正文；不保留旧正文（原件文件即存档）')
+        if update:
+            rp.steps.append(('update_policy', policy['id'], update, None if same_file else body_file))
+
+    # ── 制度附件（挂在制度下） ──
     existing: Dict[int, Dict] = {}
-    if version is not None:
-        for a in api.find('brightrule_policy_attachment', {'policy_version': version['id']}, ATTACHMENT_FIELDS):
+    if policy is not None:
+        for a in api.find('brightrule_policy_attachment', {'policy': policy['id']}, ATTACHMENT_FIELDS):
             existing[int(a.get('sort_no') or 0)] = a
     seen = set()
     for doc in docs:
@@ -364,40 +387,32 @@ def plan_row(api: Api, package: Path, row: Dict[str, str], options: List[Tuple[s
         seen.add(no)
         md = read_md(doc)
         label = doc.get('label') or f'附件{no}'
-        fields = {'title': doc['title'], 'label': label, 'attachment_class': doc.get('attachment_class'),
-                  'sort_no': no, 'body_md': md, 'has_text': doc['has_text'], 'text_chars': doc['text_chars'],
-                  'text_tokens': doc['text_tokens'], 'content_hash': doc['content_hash']}
+        fields = {'title': doc['title'], 'label': label, 'sort_no': no, 'body_md': md, 'has_text': doc['has_text'],
+                  'text_chars': doc['text_chars'], 'text_tokens': doc['text_tokens'],
+                  'content_hash': doc['content_hash'], 'has_images': bool(doc.get('has_images'))}
         file_path = file_of(doc)
         cur = existing.get(no)
         if cur is None:
-            changes.append(label + '：新建')
-            content_changed = True
+            rp.actions.append(label + '：新建')
             rp.steps.append(('create_attachment', fields, file_path))
             continue
         same_file = cur.get('content_hash') == doc['content_hash'] and (file_path is not None or not cur.get('original_file'))
         same_text = (cur.get('body_md') or None) == md
-        same_meta = (cur.get('title') == doc['title'] and cur.get('label') == label
-                     and cur.get('attachment_class') == fields['attachment_class'])
-        if same_file and same_text and same_meta:
+        same_meta = cur.get('title') == doc['title'] and cur.get('label') == label
+        same_images = bool(cur.get('has_images')) == fields['has_images']
+        if same_file and same_text and same_meta and same_images:
             continue
         what = [w for w, ok in (('文件' if file_path else '去掉文件', same_file), ('文字', same_text),
-                                ('标题或分类', same_meta)) if not ok]
-        changes.append(f'{label}：更新' + '、'.join(what))
-        content_changed = content_changed or not (same_text and same_meta)
+                                ('标题', same_meta), ('含图片', same_images)) if not ok]
+        rp.actions.append(f'{label}：更新' + '、'.join(what))
         if file_path is None and cur.get('original_file'):
             fields['original_file'] = None
         rp.steps.append(('update_attachment', cur['id'], fields, None if same_file else file_path))
     extra = [k for k in existing if k not in seen]
     if extra:
         rp.notes.append('系统里还有导入包没有的附件：' + '、'.join(str(existing[k].get('label') or f'附件{k}') for k in extra) + '（不删除）')
-    if is_current and (content_changed or extra):
-        rp.rejected = f'版本 {rp.version_no} 已是现行，内容有变化（{"；".join(changes) or "附件增减"}）。请用新的版本号导入。'
-        rp.steps = []
-        return rp
-    if changes:
-        rp.actions += changes
-    elif version is not None:
-        rp.actions.append('正文和附件全部一致，跳过')
+    if not rp.steps and policy is not None:
+        rp.actions.append('制度信息、正文和附件全部一致，跳过')
     return rp
 
 
@@ -410,7 +425,7 @@ def _url_key(url: str) -> str:
 
 
 def load_record(package: Path, url: str) -> Dict[str, Dict]:
-    """这个导入包写进某个系统后留下的记录：{包内目录: {policy_id, version_id, created_policy, created_version}}。
+    """这个导入包写进某个系统后留下的记录：{包内目录: {policy_id, created_policy, title, policy_no}}。
     按系统地址分开存，同一个包导进本地和云环境互不干扰。remove --package 有记录时直接按 id 删。"""
     try:
         data = json.loads((package / RECORD_FILE).read_text(encoding='utf-8'))
@@ -434,25 +449,22 @@ def save_record(package: Path, url: str, entries: Dict[str, Dict]) -> None:
     tmp.replace(path)
 
 
-def record_row(entries: Dict[str, Dict], rp: 'RowPlan', ids: Tuple[Optional[str], Optional[str], bool, bool]) -> None:
-    """记下这一行在系统里的制度、版本 id。「新建」以第一次导入为准：重跑时制度、版本已存在，但仍是这个包建的。"""
-    policy_id, version_id, created_policy, created_version = ids
+def record_row(entries: Dict[str, Dict], rp: 'RowPlan', ids: Tuple[Optional[str], bool]) -> None:
+    """记下这一行在系统里的制度 id。「新建」以第一次导入为准：重跑时制度已存在，但仍是这个包建的。"""
+    policy_id, created_policy = ids
     if not policy_id:
         return
     old = entries.get(rp.folder, {})
     same = old.get('policy_id') == policy_id
     entries[rp.folder] = {
-        'policy_id': policy_id, 'version_id': version_id,
-        'created_policy': created_policy or (same and bool(old.get('created_policy'))),
-        'created_version': created_version or (same and old.get('version_id') == version_id and bool(old.get('created_version'))),
-        'title': rp.title, 'version_no': rp.version_no,
+        'policy_id': policy_id,
+        'created_policy': bool(created_policy or (same and old.get('created_policy'))),
+        'title': rp.title, 'policy_no': rp.policy_no,
     }
 
 
-def apply_row(api: Api, rp: RowPlan) -> Tuple[Optional[str], Optional[str], bool, bool]:
-    """按计划写入，返回（制度 id, 版本 id, 是否新建了制度, 是否新建了版本）。"""
-    policy_id, version_id = rp.policy_id, rp.version_id
-
+def apply_row(api: Api, rp: RowPlan) -> Tuple[Optional[str], bool]:
+    """按计划写入，返回（制度 id, 是否新建了制度）。"""
     def with_file(fields: Dict, original: Optional[Path], title: str) -> Dict:
         fields = dict(fields)
         if original is not None:
@@ -460,35 +472,68 @@ def apply_row(api: Api, rp: RowPlan) -> Tuple[Optional[str], Optional[str], bool
         return fields
 
     try:
-        _apply_steps(api, rp, with_file, ids := [policy_id, version_id, False, False])
+        _apply_steps(api, rp, with_file, ids := [rp.policy_id, False])
     except ApiError as e:
-        e.partial = tuple(ids)   # 中途失败：已经建好的制度、版本也要记下，remove 才删得掉
+        e.partial = tuple(ids)   # 中途失败：已经建好的制度也要记下，remove 才删得掉
         raise
     return tuple(ids)
 
 
 def _apply_steps(api: Api, rp: RowPlan, with_file, ids: List) -> None:
-    """逐步写入；ids = [制度 id, 版本 id, 新建了制度, 新建了版本]，边写边更新。"""
+    """逐步写入；ids = [制度 id, 新建了制度]，边写边更新（rp.policy_id 同步，附件和相关制度都挂在它上面）。"""
     for step in rp.steps:
-        policy_id, version_id = ids[0], ids[1]
         kind = step[0]
         if kind == 'create_policy':
-            ids[0] = api.create('brightrule_policy', step[1])['id']
-            ids[2] = True
+            rp.policy_id = ids[0] = api.create('brightrule_policy', with_file(step[1], step[2], f'{rp.title} 正文'))['id']
+            ids[1] = True
         elif kind == 'update_policy':
-            api.update('brightrule_policy', step[1], step[2])
-            ids[0] = step[1]
-        elif kind == 'create_version':
-            fields = with_file(step[1], step[2], f"{step[1]['title']} 正文")
-            ids[1] = api.create('brightrule_policy_version', {**fields, 'policy': policy_id})['id']
-            ids[3] = True
-        elif kind == 'update_version':
-            api.update('brightrule_policy_version', step[1], with_file(step[2], step[3], f'{rp.title} {rp.version_no} 正文'))
+            api.update('brightrule_policy', step[1], with_file(step[2], step[3], f'{rp.title} 正文'))
+            rp.policy_id = ids[0] = step[1]
         elif kind == 'create_attachment':
             fields = with_file(step[1], step[2], f"{step[1]['label']} {step[1]['title']}")
-            api.create('brightrule_policy_attachment', {**fields, 'policy_version': version_id})
+            api.create('brightrule_policy_attachment', {**fields, 'policy': rp.policy_id})
         elif kind == 'update_attachment':
             api.update('brightrule_policy_attachment', step[1], with_file(step[2], step[3], f"{step[2]['label']} {step[2]['title']}"))
+
+
+def link_related(api: Api, plans: List[RowPlan], apply: bool) -> int:
+    """全部制度写完后：「关联制度 / 文件」里与系统中某一份制度名称完全一致的，填进「相关制度」（多选查找）。
+    预演时，本批要新建、系统里还没有的制度只提示「写入后关联」。返回更新（或将更新）的制度份数。"""
+    batch = {p.title for p in plans if not p.rejected}
+    changed = 0
+    for rp in plans:
+        if rp.rejected or not rp.related:
+            continue
+        ids: List[str] = []
+        matched: List[str] = []
+        later: List[str] = []
+        ambiguous: List[str] = []
+        for name in related_titles(rp.related):
+            if name == rp.title:
+                continue
+            rows = api.find('brightrule_policy', {'title': name}, 'id')
+            if len(rows) == 1 and rows[0]['id'] != rp.policy_id:
+                ids.append(rows[0]['id'])
+                matched.append(name)
+            elif len(rows) > 1:
+                ambiguous.append(name)
+            elif not rows and name in batch:
+                later.append(name)
+        current: List[str] = []
+        if rp.policy_id:
+            rows = api.find('brightrule_policy', {'id': rp.policy_id}, 'id,related_policies')
+            current = ref_ids(rows[0].get('related_policies')) if rows else []
+        if ambiguous:
+            print(f'      {rp.folder}：系统里有多份同名制度，没有关联：' + '、'.join(ambiguous))
+        if later:
+            print(f'      {rp.folder}：本批新建的 ' + '、'.join(later) + ' 写入后关联')
+        if sorted(ids) == sorted(current):
+            continue
+        changed += 1
+        print(f'      {rp.folder}：相关制度 → ' + ('、'.join(matched) if matched else '（清空）'))
+        if apply and rp.policy_id:
+            api.update('brightrule_policy', rp.policy_id, {'related_policies': ids})
+    return changed
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -512,10 +557,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         except AuthError as e:
             raise SystemExit(f'凭证被拒绝，整批停止：{e}\n请用 --login（输入账号密码）或检查 BRIGHTRULE_TOKEN / BRIGHTRULE_API_KEY。')
         except ApiError as e:
-            rp = RowPlan(row.get('包内目录', ''), row.get('制度编号', ''), row.get('制度名称', ''), row.get('版本号', ''),
+            rp = RowPlan(row.get('包内目录', ''), row.get('制度编号', ''), row.get('制度名称', ''), row.get('文号', ''),
                          rejected=f'查询系统失败：{e}')
         if args.apply and not rp.rejected and not rp.steps and rp.policy_id:
-            record_row(record, rp, (rp.policy_id, rp.version_id, False, False))   # 无变化：照样记下 id
+            record_row(record, rp, (rp.policy_id, False))   # 无变化：照样记下 id
             save_record(package, args.url, record)
         if args.apply and not rp.rejected and rp.steps:
             try:
@@ -533,9 +578,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 rp.rejected = f'写入中断：{e}（已写入的部分保留；修正后重跑会接着做）'
         plans.append(rp)
         mark = '✗' if rp.rejected else ('·' if not rp.steps else '✓')
-        print(f'{progress.next()} {mark} {rp.folder}  {rp.policy_no} {rp.version_no}')
+        print(f'{progress.next()} {mark} {rp.folder}  {rp.policy_no} {rp.doc_no}')
         for a in ([f'拒绝：{rp.rejected}'] if rp.rejected else rp.actions) + rp.notes:
             print(f'      {a}')
+    print('相关制度（「关联制度 / 文件」里与库内制度名称完全一致的）：')
+    try:
+        linked = link_related(api, plans, args.apply)
+    except AuthError as e:
+        raise SystemExit(f'凭证被拒绝，停止：{e}')
+    except ApiError as e:
+        linked = 0
+        print(f'      关联失败：{e}（重跑 import 会接着做）')
+    print(f'      {"已更新" if args.apply else "将更新"} {linked} 份制度的相关制度。')
     write_report(package, plans, args)
     todo = [p for p in plans if p.steps and not p.rejected]
     rej = [p for p in plans if p.rejected]
@@ -545,8 +599,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if uploads and api.mode == 'api_key':
             print('注意：要上传文件，而平台的文件上传不认 API Key。写入时请用 --login（输入账号密码）。')
         print('确认无误后，在命令末尾加 --apply 写入' + ('（并加 --login）' if uploads and api.mode == 'api_key' else '') + '。')
-    if args.apply and todo:
-        print('导入的版本是草稿：请在系统里核对后，把版本状态改为「现行」，员工才能看到、问到。')
+    if args.apply and any(st[0] == 'create_policy' for p in todo for st in p.steps):
+        print('新建的制度是草稿：请在系统里核对后发布（./run.sh publish，或在页面上把状态改为「已发布」），员工才能看到、问到。')
     return 1 if rej else 0
 
 
@@ -554,7 +608,7 @@ def write_report(package: Path, plans: List[RowPlan], args) -> None:
     stamp = _dt.datetime.now().strftime('%Y%m%d-%H%M%S')
     lines = [f'# 导入{"" if args.apply else "预演"}报告', '', f'- 时间：{stamp}', f'- 系统：{args.url}', '']
     for p in plans:
-        lines.append(f'## {p.folder}（{p.policy_no} {p.version_no}）— {"拒绝" if p.rejected else ("写入" if p.steps else "无变化")}')
+        lines.append(f'## {p.folder}（{p.policy_no} {p.doc_no}）— {"拒绝" if p.rejected else ("写入" if p.steps else "无变化")}')
         lines += [f'- {a}' for a in ([p.rejected] if p.rejected else p.actions) + p.notes] + ['']
     (package / f'导入{"" if args.apply else "预演"}报告-{stamp}.md').write_text('\n'.join(lines), encoding='utf-8')
 

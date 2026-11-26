@@ -103,7 +103,7 @@ def scan_one(path: Path) -> Tuple[Dict[str, str], Dict[str, str], List[str]]:
                 problems.append(f'{f}「{row[f]}」认不出')
                 row[f] = ''
     meta, _missing = metadata(md, path.stem)
-    row['发文文号'] = meta.get('version_no', '')
+    row['发文文号'] = meta.get('doc_no', '')
     # 发文日期只从发文通知、版记里取；文件里没有这两部分就空着（不拿信息表或正文里的日期顶替）
     row['发文日期'] = meta.get('issued_date', '') if (sec.get('发文通知') or sec.get('版记')) else ''
     e = EFFECTIVE.search(sec.get('正文', md))

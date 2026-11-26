@@ -15,10 +15,9 @@ const afterCreate = P`has(record.id)`;
  * question to a person when nothing matches.
  *
  * Scope, basis and run record (brightrule#27, docs/question-scope.md):
- *   - `scope_policy` / `scope_version` name what the question is about; the
- *     scope hook (src/qa/question-scope.hook.ts) fills the policy from the
- *     version, refuses a version that is not current or does not match, and
- *     derives `scope_kind`;
+ *   - `scope_policy` names the policy the question is about; the scope hook
+ *     (src/qa/question-scope.hook.ts) refuses a policy that is not published
+ *     and derives `scope_kind` (there are no versions since brightrule#45);
  *   - `answer_redacted`, `basis`, `basis_md`, `answer_route` and `run_info`
  *     hold what the model answered, on what, and how. Like the older answer
  *     fields they are written by the system or the in-product AI, never by
@@ -38,7 +37,7 @@ export const Question = ObjectSchema.create({
   pluralLabel: '制度问询',
   icon: 'message-circle-question',
   nameField: 'question',
-  description: '员工就制度提出的问题；AI 依据现行条款答复并注明出处，答不上的转人工',
+  description: '员工就制度提出的问题；AI 依据已发布制度答复并注明出处，答不上的转人工',
 
   fieldGroups: [
     { key: 'question', label: '问题' },
@@ -51,26 +50,17 @@ export const Question = ObjectSchema.create({
     scope_policy: Field.lookup('brightrule_policy', {
       label: '指定制度',
       group: 'question',
-      description: '只问某一份制度时选择；只选版本时自动带出',
-    }),
-    scope_version: Field.lookup('brightrule_policy_version', {
-      label: '指定版本',
-      group: 'question',
-      description: '只能指定现行版本',
-      lookupFilters: [
-        { field: 'version_status', operator: 'eq', value: 'current' },
-        { field: 'policy', operator: 'eq', value: { $record: 'scope_policy' } },
-      ],
+      description: '只问某一份制度时选择；只能选已发布的制度',
+      lookupFilters: [{ field: 'status', operator: 'eq', value: 'published' }],
     }),
     scope_kind: Field.select({
       label: '问询范围',
       group: 'question',
       visibleWhen: afterCreate,
-      description: '由指定制度、指定版本自动推出',
+      description: '由指定制度自动推出',
       options: [
         { label: '通用', value: 'general', default: true },
         { label: '指定制度', value: 'policy' },
-        { label: '指定版本', value: 'version' },
       ],
     }),
     status: Field.select({
@@ -107,7 +97,7 @@ export const Question = ObjectSchema.create({
       label: '依据（结构化）',
       group: 'answer',
       visibleWhen: afterCreate,
-      description: '[{ policy, version, article, quote }]',
+      description: '[{ policy, article, quote }]',
     }),
     basis_md: Field.markdown({ label: '依据', group: 'answer', visibleWhen: afterCreate }),
     answer_route: Field.select({
@@ -124,7 +114,7 @@ export const Question = ObjectSchema.create({
       label: '运行记录',
       group: 'run',
       visibleWhen: afterCreate,
-      description: '模型、token、耗时、用到的版本；对话写入时记对话 id',
+      description: '模型、token、耗时、用到的制度；对话写入时记对话 id',
     }),
   },
 });

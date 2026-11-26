@@ -1,5 +1,0 @@
-lxml>=4.9
-openpyxl>=3.1
-# 扫描版 PDF 文字识别（macOS 自带的 Vision）：只在 Mac 上安装
-pyobjc-framework-Vision>=9; sys_platform == "darwin"
-pyobjc-framework-Quartz>=9; sys_platform == "darwin"

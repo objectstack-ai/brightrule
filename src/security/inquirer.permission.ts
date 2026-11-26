@@ -13,9 +13,11 @@ import { SUGGESTION_TRIAGE_FIELDS } from './suggestion-fields.js';
  * write. No capability, so the 「AI 诊断」 action is hidden from and refused to
  * an employee.
  *
- * Which policies an employee may read (published only, by issuing unit, …) is
- * row-level security still to come (#10, docs/visibility.md): until then this
- * set reads every policy.
+ * Which policies an employee may read is decided by sharing: the policy is
+ * private, and the environment's sharing rules on `owning_unit` open the
+ * group office's policies to the whole group and a company's to that company
+ * (docs/visibility.md 第 5 节). Published-only is row-level security still to
+ * come (#10).
  */
 export const InquirerPermissionSet = definePermissionSet({
   name: 'brightrule_inquirer',

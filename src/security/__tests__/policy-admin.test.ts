@@ -31,6 +31,20 @@ describe('制度管理员 and 问询人 on the engine', () => {
     });
     expect(grant.status).toBe(201);
     [policy] = (await stack.rows('brightrule_policy', { title: '差旅费报销管理办法' })) as Row[];
+    // The policy is private (docs/visibility.md 第 5 节): the employee reads the
+    // group's policies through the environment's sharing rule, as a member of
+    // the group (unit-visibility.test.ts covers the companies).
+    const [group] = (await stack.rows('sys_business_unit', { code: 'DEMO-GROUP' })) as Row[];
+    for (const [object, body] of [
+      ['sys_business_unit_member', { user_id: (await stack.contextFor(employee)).userId, business_unit_id: group.id, is_primary: true }],
+      ['sys_sharing_rule', {
+        name: 'policy_group_all', label: '集团制度全员可见', object_name: 'brightrule_policy',
+        criteria_json: JSON.stringify({ owning_unit: group.id }), recipient_type: 'unit_and_subordinates',
+        recipient_id: group.id, access_level: 'read', active: true,
+      }],
+    ] as const) {
+      expect((await stack.apiAs(devAdmin, 'POST', `/data/${object}`, body)).status).toBe(201);
+    }
   });
 
   afterAll(async () => {

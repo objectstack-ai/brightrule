@@ -33,7 +33,11 @@ export const InquirerPermissionSet = definePermissionSet({
   },
   // An employee reads but does not write the triage and handling fields of
   // 制度意见 (brightrule#57); 制度管理员 grants them back.
-  fields: Object.fromEntries(
-    SUGGESTION_TRIAGE_FIELDS.map((f) => [`brightrule_policy_suggestion.${f}`, { readable: true, editable: false }]),
-  ),
+  fields: {
+    ...Object.fromEntries(
+      SUGGESTION_TRIAGE_FIELDS.map((f) => [`brightrule_policy_suggestion.${f}`, { readable: true, editable: false }]),
+    ),
+    // 大类 is the intake hook's alone: it always derives it from 类别.
+    'brightrule_policy_suggestion.category_group': { readable: true, editable: false },
+  },
 });

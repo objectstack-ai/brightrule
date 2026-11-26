@@ -33,8 +33,12 @@ export const PolicyAdminPermissionSet = definePermissionSet({
     // units are maintained by the platform's administrators.
     sys_business_unit: { allowRead: true },
   },
-  fields: Object.fromEntries(
-    SUGGESTION_TRIAGE_FIELDS.map((f) => [`brightrule_policy_suggestion.${f}`, { readable: true, editable: true }]),
-  ),
+  fields: {
+    ...Object.fromEntries(
+      SUGGESTION_TRIAGE_FIELDS.map((f) => [`brightrule_policy_suggestion.${f}`, { readable: true, editable: true }]),
+    ),
+    // 大类 is the intake hook's alone: it always derives it from 类别.
+    'brightrule_policy_suggestion.category_group': { readable: true, editable: false },
+  },
   systemPermissions: [POLICY_DIAGNOSE_CAPABILITY],
 });

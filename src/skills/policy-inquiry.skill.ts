@@ -31,7 +31,7 @@ export const PolicyInquirySkill = defineSkill({
 
 ## 数据在哪里
 
-- 制度目录：对象 brightrule_policy。只看 status = "published" 的制度；读目录时只取字段 id、title、doc_no、category、issuing_unit、department、summary、effective_date，不要带 body_md（正文很长，读正文时再取）。status 的取值：published 已发布（可据以作答）、draft 草稿（还未发布）、revising 修订中、abolished 已废止（不再有效，不据以作答）。summary 是一两句话的目录摘要，可能为空，为空不代表没有正文。
+- 制度目录：对象 brightrule_policy。只看 status = "published" 的制度；读目录时只取字段 id、title、doc_no、category_group、category、policy_level、issuing_unit、department、summary、effective_date，不要带 body_md（正文很长，读正文时再取）。status 的取值：published 已发布（可据以作答）、draft 草稿（还未发布）、revising 修订中、abolished 已废止（不再有效，不据以作答）。summary 是一两句话的目录摘要，可能为空，为空不代表没有正文。category_group 是制度大类：governance 治理类、operations 经营管理类、party 党工纪类；category 是其下的制度分类（小类）。policy_level 是制度层级：level_1 一级（公司基本管理制度）、level_2 二级（部门基本制度）、level_3 三级（配套管理细则），可能为空。
 - 制度正文：就在制度记录上，字段 body_md（Markdown，已脱敏）。doc_no 是文号，引用出处时写在制度名之后。has_images = true 表示正文里有图片等内容（正文里只留「（图片）」等标记），你看不到；问题恰好涉及这些位置时，照实说明需查看原件。
 - 附件：对象 brightrule_policy_attachment（制度附件），挂在制度下（字段 policy）。label 是原文里的编号（附件1、附表2），title 是附件自己的名称，body_md 是附件全文（已脱敏，可能为空）。附件与正文一起读；只是待填写的空白表格的，不作答复依据，只告诉员工有这个表。
 - 条款对象 brightrule_clause 不是正文来源：导入的制度没有条款记录，不要用它判断一份制度「没有内容」。
@@ -61,7 +61,7 @@ export const PolicyInquirySkill = defineSkill({
 - 只用读到的正文作答。答复中的每个数字、金额、天数、条件都必须能在被引条文中找到；需要计算时写出算式。
 - 不凭常识或记忆补充制度没写的内容，不提供法律意见。
 - 涉及个人具体情况（如本人年假余额、本人能否晋级）时，说明制度规定，并请员工找归口部门确认。
-- 两处已发布的规定口径不一致时，并列给出，并说明需归口部门确认。
+- 两处已发布的规定口径不一致时，并列给出；两份制度的层级（policy_level）都有且不同的，说明按集团制度效力位阶「一级高于二级、二级高于三级」应以层级高的为准，同时说明需归口部门确认；有一份层级为空或层级相同的，不下结论，只说明需归口部门确认。
 - 在答复末尾加一句：以正式发布的制度文本为准。
 
 ## 跨制度的分析类问题
@@ -71,7 +71,7 @@ export const PolicyInquirySkill = defineSkill({
 - 先定范围：员工点名了制度，只读这几份的正文；点名的是事项（如差旅、职级），从目录里选出与该事项相关的制度再读正文。没有点名也没有事项时，请员工先说明关心哪个领域，不要一次读全部制度。
 - 定口径：「互斥」「冲突」「矛盾」按「两处已发布的规定对同一事项的规定不一致」理解，并在答复第一句说明是按这个口径比对的。
 - 逐个事项比对，只认规定确实不一致的：同一事项的数额、条件、审批人、禁止与允许不同。只是主题相近、各管各的不算冲突，不要硬凑。
-- 发现不一致：并列给出两处原文和出处，说明需归口部门确认以哪条为准。
+- 发现不一致：并列给出两处原文和出处（写明各自的制度层级）；层级都有且不同的，说明按效力位阶应以层级高的为准，层级为空或相同的不下结论；都要说明需归口部门确认以哪条为准。
 - 没有发现：答「在 N 份制度中，未发现对同一事项规定不一致的情况」，写出比对了哪些制度；说明这是按正文比对的结果，未经归口部门确认。
 
 ## 找不到依据时

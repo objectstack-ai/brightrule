@@ -22,6 +22,11 @@ const C = '合同管理办法';
 const FC = `关于转发《${C}》的通知`;
 const RS = `关于参照执行《${S}》的通知`;
 const AR = '档案管理办法（试行）';
+// Two group policies of the other two major classes (brightrule#54): a
+// level-1 governance rule and a 党工纪 policy, so the seed covers all three
+// classes and all three levels.
+const BR = '董事会议事规则';
+const PI = '党风廉政建设责任制实施办法';
 
 // ── 业务单元 ────────────────────────────────────────────────────────────────
 // The units a policy belongs to (`owning_unit`, a lookup to the platform's
@@ -61,11 +66,20 @@ const CLAUSES: ClauseRow[] = [
   [C, '第十五条', '法务审查', '合同金额 50 万元以上，或违约金超过合同金额 20% 的，须经法务部审查后方可签署。', '合同 法务 审查 签署'],
   [FC, '第一条', '执行要求', '本单位签订的合同按集团《合同管理办法》执行；需法务审查的合同，由本单位综合办公室初审后报集团法务部。', '合同 转发 初审'],
   [RS, '第一条', '参照范围', '本单位信息系统账号、数据分级与外部工具使用参照集团《信息安全管理规定》执行；本单位信息安全联络人由综合部指定。', '信息安全 参照执行 联络人'],
+  [BR, '第九条', '会议通知', '董事会定期会议应于会议召开 10 日前书面通知全体董事；临时会议应于会议召开 3 日前通知。', '董事会 会议 通知'],
+  [PI, '第六条', '廉政谈话', '各部门负责人每年至少与本部门员工开展一次廉政谈话，谈话记录报纪检监察室备案。', '廉政 谈话 纪检'],
   [AR, '第六条', '借阅登记', '借阅档案须填写借阅登记表，经部门负责人同意后借阅，借阅期限不超过 15 个工作日。', '档案 借阅 登记'],
 ];
 
 /** 试行: the title says 「试行」 or 「暂行」 — what src/qa/policy-trial.hook.ts derives on save. */
 const isTrial = (title: string) => /试行|暂行/.test(title);
+
+/**
+ * 制度大类: the major class of a 小类 — what src/qa/policy-category-group.hook.ts
+ * derives on save.
+ */
+const categoryGroup = (category: string) =>
+  category === 'governance' ? 'governance' : category === 'party' ? 'party' : 'operations';
 
 /** What every group policy's issuing notice says: issued by the group, sent to every unit. */
 const GROUP_ISSUE = { owning_unit: GROUP, issuance_type: 'issue', addressees: '集团机关各部室、各下属企业' };
@@ -74,18 +88,20 @@ const GROUP_ISSUE = { owning_unit: GROUP, issuance_type: 'issue', addressees: '�
  * The sample policies' own fields — the 制度信息表 and issuing notice of each,
  * invented. Every one is published; the related-documents text names one
  * library policy and one outside the library (a name only), as an imported
- * info table does. The five group policies come first; the subsidiaries'
+ * info table does. The seven group policies come first; the subsidiaries'
  * forward and follow two of them (`parent_policy`, brightrule#48).
  */
 const POLICY_ROWS = [
-  { title: T, ...GROUP_ISSUE, issued_date: '2026-06-20',  policy_no: 'FIN-001', doc_no: '示例集团财字〔2026〕3号', issuing_unit: '集团', category: 'finance', policy_level: '二级管理制度', department: '财务部', co_departments: '人力资源部', review_body: '总经理办公会', decision_body: '总经理办公会', related_documents: `《费用报销管理规定》、《${L}》`, status: 'published', effective_date: '2026-07-01', next_review_date: '2027-06-30', summary: '国内出差的住宿、交通、补贴标准与报销要求。' },
-  { title: L, ...GROUP_ISSUE, issued_date: '2026-02-20',  policy_no: 'HR-002', doc_no: '示例集团人字〔2026〕1号', issuing_unit: '集团', category: 'hr', policy_level: '二级管理制度', department: '人力资源部', status: 'published', effective_date: '2026-03-01', next_review_date: '2027-02-28', summary: '工作时间、请假类型、年休假与审批权限。' },
-  { title: S, ...GROUP_ISSUE, issued_date: '2026-05-08',  policy_no: 'IT-003', doc_no: '示例集团信字〔2026〕2号', issuing_unit: '集团', category: 'it', policy_level: '三级管理制度', department: '信息技术部', status: 'published', effective_date: '2026-05-15', next_review_date: '2026-12-15', summary: '账号口令、数据分级与外部工具使用要求。' },
-  { title: G, ...GROUP_ISSUE, issued_date: '2026-03-25',  policy_no: 'CMP-004', doc_no: '示例集团合字〔2026〕4号', issuing_unit: '集团', category: 'compliance', policy_level: '二级管理制度', department: '合规部', review_body: '党委会', decision_body: '董事会', status: 'published', effective_date: '2026-04-01', next_review_date: '2027-03-31', summary: '礼品礼金收受标准与利益冲突申报。' },
-  { title: C, ...GROUP_ISSUE, issued_date: '2026-05-26',  policy_no: 'CMP-005', doc_no: '示例集团法字〔2026〕5号', issuing_unit: '集团', category: 'compliance', policy_level: '三级管理制度', department: '法务部', related_documents: `《${G}》`, status: 'published', effective_date: '2026-06-01', next_review_date: '2027-05-31', summary: '合同起草、审查、签署与归档。' },
-  { title: FC, policy_no: 'A-LAW-001', doc_no: '示例甲司办字〔2026〕7号', issuing_unit: '示例甲公司', owning_unit: UNIT_A, issuance_type: 'forward', parent_policy: C, addressees: '本单位各部门、各项目部', category: 'compliance', policy_level: '三级管理制度', department: '综合办公室', status: 'published', issued_date: '2026-06-10', effective_date: '2026-06-10', next_review_date: '2027-06-09', summary: '转发集团合同管理办法，明确本单位的合同初审部门。' },
-  { title: RS, policy_no: 'B-IT-001', doc_no: '示例乙司综字〔2026〕4号', issuing_unit: '示例乙公司', owning_unit: UNIT_B, issuance_type: 'reference', parent_policy: S, addressees: '本单位各部门', category: 'it', policy_level: '三级管理制度', department: '综合部', status: 'published', issued_date: '2026-06-01', effective_date: '2026-06-01', next_review_date: '2026-12-31', summary: '参照执行集团信息安全管理规定，指定本单位信息安全联络人。' },
-  { title: AR, policy_no: 'B-ADM-002', doc_no: '示例乙司综字〔2026〕9号', issuing_unit: '示例乙公司', owning_unit: UNIT_B, issuance_type: 'issue', addressees: '本单位各部门', category: 'admin', policy_level: '三级管理制度', department: '综合部', status: 'published', issued_date: '2026-08-15', effective_date: '2026-09-01', next_review_date: '2027-08-31', summary: '档案的归档、保管与借阅；试行一年。' },
+  { title: T, ...GROUP_ISSUE, issued_date: '2026-06-20',  policy_no: 'FIN-001', doc_no: '示例集团财字〔2026〕3号', issuing_unit: '集团', category: 'finance', policy_level: 'level_2', department: '财务部', co_departments: '人力资源部', review_body: '总经理办公会', decision_body: '总经理办公会', related_documents: `《费用报销管理规定》、《${L}》`, status: 'published', effective_date: '2026-07-01', next_review_date: '2027-06-30', summary: '国内出差的住宿、交通、补贴标准与报销要求。' },
+  { title: L, ...GROUP_ISSUE, issued_date: '2026-02-20',  policy_no: 'HR-002', doc_no: '示例集团人字〔2026〕1号', issuing_unit: '集团', category: 'hr', policy_level: 'level_2', department: '人力资源部', status: 'published', effective_date: '2026-03-01', next_review_date: '2027-02-28', summary: '工作时间、请假类型、年休假与审批权限。' },
+  { title: S, ...GROUP_ISSUE, issued_date: '2026-05-08',  policy_no: 'IT-003', doc_no: '示例集团信字〔2026〕2号', issuing_unit: '集团', category: 'it', policy_level: 'level_3', department: '信息技术部', status: 'published', effective_date: '2026-05-15', next_review_date: '2026-12-15', summary: '账号口令、数据分级与外部工具使用要求。' },
+  { title: G, ...GROUP_ISSUE, issued_date: '2026-03-25',  policy_no: 'CMP-004', doc_no: '示例集团合字〔2026〕4号', issuing_unit: '集团', category: 'compliance', policy_level: 'level_2', department: '合规部', review_body: '党委会', decision_body: '董事会', status: 'published', effective_date: '2026-04-01', next_review_date: '2027-03-31', summary: '礼品礼金收受标准与利益冲突申报。' },
+  { title: C, ...GROUP_ISSUE, issued_date: '2026-05-26',  policy_no: 'CMP-005', doc_no: '示例集团法字〔2026〕5号', issuing_unit: '集团', category: 'compliance', policy_level: 'level_3', department: '法务部', related_documents: `《${G}》`, status: 'published', effective_date: '2026-06-01', next_review_date: '2027-05-31', summary: '合同起草、审查、签署与归档。' },
+  { title: BR, ...GROUP_ISSUE, issued_date: '2026-01-10',  policy_no: 'GOV-006', doc_no: '示例集团办字〔2026〕1号', issuing_unit: '集团', category: 'governance', policy_level: 'level_1', department: '董事会办公室', review_body: '党委会', decision_body: '董事会', status: 'published', effective_date: '2026-01-15', next_review_date: '2027-01-14', summary: '董事会会议的召集、通知、表决与记录。' },
+  { title: PI, ...GROUP_ISSUE, issued_date: '2026-04-08',  policy_no: 'PTY-007', doc_no: '示例集团纪字〔2026〕2号', issuing_unit: '集团', category: 'party', policy_level: 'level_3', department: '纪检监察室', decision_body: '党委会', status: 'published', effective_date: '2026-04-15', next_review_date: '2027-04-14', summary: '党风廉政建设的责任分工、廉政谈话与考核。' },
+  { title: FC, policy_no: 'A-LAW-001', doc_no: '示例甲司办字〔2026〕7号', issuing_unit: '示例甲公司', owning_unit: UNIT_A, issuance_type: 'forward', parent_policy: C, addressees: '本单位各部门、各项目部', category: 'compliance', policy_level: 'level_3', department: '综合办公室', status: 'published', issued_date: '2026-06-10', effective_date: '2026-06-10', next_review_date: '2027-06-09', summary: '转发集团合同管理办法，明确本单位的合同初审部门。' },
+  { title: RS, policy_no: 'B-IT-001', doc_no: '示例乙司综字〔2026〕4号', issuing_unit: '示例乙公司', owning_unit: UNIT_B, issuance_type: 'reference', parent_policy: S, addressees: '本单位各部门', category: 'it', policy_level: 'level_3', department: '综合部', status: 'published', issued_date: '2026-06-01', effective_date: '2026-06-01', next_review_date: '2026-12-31', summary: '参照执行集团信息安全管理规定，指定本单位信息安全联络人。' },
+  { title: AR, policy_no: 'B-ADM-002', doc_no: '示例乙司综字〔2026〕9号', issuing_unit: '示例乙公司', owning_unit: UNIT_B, issuance_type: 'issue', addressees: '本单位各部门', category: 'admin', policy_level: 'level_3', department: '综合部', status: 'published', issued_date: '2026-08-15', effective_date: '2026-09-01', next_review_date: '2027-08-31', summary: '档案的归档、保管与借阅；试行一年。' },
 ];
 
 /** A policy row with its body: Markdown, article index and sizes (its original is seeded apart, below). */
@@ -95,7 +111,7 @@ const withBody = (p: (typeof POLICY_ROWS)[number]) => {
     CLAUSES.filter(([policy]) => policy === p.title).map(([, no, title, text]) => ({ no, title, text })),
   );
   const { text_chars, text_tokens } = textStats(markdown);
-  return { ...p, is_trial: isTrial(p.title), body_md: markdown, article_index: articleIndex, text_chars, text_tokens, has_images: false };
+  return { ...p, is_trial: isTrial(p.title), category_group: categoryGroup(p.category), body_md: markdown, article_index: articleIndex, text_chars, text_tokens, has_images: false };
 };
 
 const policies = defineSeed(Policy, {
@@ -146,6 +162,8 @@ const ORIGINAL_SHA256: Record<string, string> = {
   'a-contract-forward-body.txt': '775913dfbec40968c91b78f7d687bb29ca31187d1660687308c580b6079774bd',
   'b-security-reference-body.txt': '4f4c4ab0937a95a5bbb1a7360f15da9a21f752c2a2978c7908529cf3dbf5a988',
   'b-archives-body.txt': '05b7ded8c4cd1147d1f0d7bb23eb277724bcc0f50eac0020be4b2b6a0dae9627',
+  'board-rules-body.txt': 'd2e3cf5636d03b4f0ed07ea581877d4a857b89de16d344877a196acb94f598f8',
+  'integrity-body.txt': '33808722d83a81bd88eff8d35197fb351f5b3f6ae3fc7c9c84a663681c325035',
 };
 
 /** The file-name stem of each sample policy's placeholders. */
@@ -158,6 +176,8 @@ const FILE_STEM: Record<string, string> = {
   [FC]: 'a-contract-forward',
   [RS]: 'b-security-reference',
   [AR]: 'b-archives',
+  [BR]: 'board-rules',
+  [PI]: 'integrity',
 };
 
 const originalOf = (file: string, name: string) =>

@@ -30,7 +30,7 @@ describe('a policy holds its own body', () => {
   it('gives every seeded policy its body, its 文号 and current clauses', async () => {
     const policies = (await stack.rows('brightrule_policy', {}, { as })) as Row[];
     const clauses = (await stack.rows('brightrule_clause', {}, { as })) as Row[];
-    expect(policies).toHaveLength(8);
+    expect(policies).toHaveLength(10);
     for (const p of policies) {
       expect(p.status).toBe('published');
       expect(String(p.body_md), String(p.title)).toMatch(/\*\*第.+条\*\*/);

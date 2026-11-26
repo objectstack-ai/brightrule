@@ -7,7 +7,8 @@ import { Policy } from '../objects/policy.object.js';
 // find. The lists show 「所属单位」, the unit a policy belongs to
 // (brightrule#52), in place of 发文单位's verbatim text, which stays on the
 // form; 「文件性质」 sits beside 上级制度, which a forwarded or followed policy
-// points at.
+// points at. 制度大类 and 制度层级 (brightrule#54) sit beside 制度分类, so a
+// list filters and groups by the policy system's 三类三层级.
 const policyViews: UI.View = {
   object: Policy.name,
   list: {
@@ -17,7 +18,9 @@ const policyViews: UI.View = {
       { field: 'title' },
       { field: 'policy_no' },
       { field: 'doc_no' },
+      { field: 'category_group' },
       { field: 'category' },
+      { field: 'policy_level' },
       { field: 'owning_unit' },
       { field: 'department' },
       { field: 'issuance_type' },
@@ -38,7 +41,9 @@ const policyViews: UI.View = {
       columns: [
         { field: 'title' },
         { field: 'doc_no' },
+        { field: 'category_group' },
         { field: 'category' },
+        { field: 'policy_level' },
         { field: 'owning_unit' },
         { field: 'is_trial' },
         { field: 'effective_date' },

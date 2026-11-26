@@ -118,6 +118,20 @@ describe("the seeded policies' source fields (brightrule#52)", () => {
   });
 });
 
+describe("the seeded policies' class and level (brightrule#54)", () => {
+  it('derive 制度大类 from 制度分类, as the class hook would', () => {
+    for (const p of policies) {
+      const expected = p.category === 'governance' ? 'governance' : p.category === 'party' ? 'party' : 'operations';
+      expect(p.category_group, String(p.title)).toBe(expected);
+    }
+  });
+
+  it('cover all three classes and all three levels', () => {
+    expect(new Set(policies.map((p) => p.category_group))).toEqual(new Set(['governance', 'operations', 'party']));
+    expect(new Set(policies.map((p) => p.policy_level))).toEqual(new Set(['level_1', 'level_2', 'level_3']));
+  });
+});
+
 describe('the seeded attachments', () => {
   it('hang under 差旅费报销管理办法 itself: a table with text and a form without', () => {
     expect(attachments.map((d) => [d.label, d.sort_no, d.has_text, d.has_images])).toEqual([

@@ -22,6 +22,7 @@ describe('the seeded policy bodies', () => {
       'brightrule_policy',
       'brightrule_policy_attachment',
       'brightrule_policy_suggestion',
+      'sys_business_unit',
     ]);
   });
 
@@ -73,6 +74,46 @@ describe('the seeded policy bodies', () => {
       const bytes = readFileSync(packageRoot + ref.$file);
       expect(bytes.toString('utf8').startsWith('【合成示例原件】')).toBe(true);
       expect(row.content_hash, ref.$file).toBe(createHash('sha256').update(bytes).digest('hex'));
+    }
+  });
+});
+
+describe("the seeded policies' source fields (brightrule#52)", () => {
+  const units = rows('sys_business_unit');
+
+  it('seed synthetic business units: a group and two subsidiaries under it', () => {
+    const [group, ...subsidiaries] = units;
+    expect(group.parent_business_unit_id).toBeUndefined();
+    expect(subsidiaries.length).toBeGreaterThanOrEqual(2);
+    for (const u of units) expect(String(u.name)).toMatch(/^示例/);
+    for (const u of subsidiaries) expect(u.parent_business_unit_id).toBe(group.name);
+  });
+
+  it('give every policy a seeded owning unit, at least two of them in use', () => {
+    const names = units.map((u) => u.name);
+    for (const p of policies) expect(names, String(p.title)).toContain(p.owning_unit);
+    expect(new Set(policies.map((p) => p.owning_unit)).size).toBeGreaterThanOrEqual(2);
+  });
+
+  it('cover 印发, 转发 and 参照执行; a forwarded or followed policy names its group policy', () => {
+    expect(new Set(policies.map((p) => p.issuance_type))).toEqual(new Set(['issue', 'forward', 'reference']));
+    const titles = policies.map((p) => p.title);
+    for (const p of policies.filter((p) => p.issuance_type !== 'issue')) {
+      expect(titles, String(p.title)).toContain(p.parent_policy);
+      const parent = policies.find((q) => q.title === p.parent_policy)!;
+      expect(parent.owning_unit).toBe(units[0].name);
+    }
+  });
+
+  it('mark 试行 from the title, as the trial hook would, with one trial policy at least', () => {
+    for (const p of policies) expect(p.is_trial, String(p.title)).toBe(/试行|暂行/.test(String(p.title)));
+    expect(policies.some((p) => p.is_trial)).toBe(true);
+  });
+
+  it('date the issuing notice no later than the policy takes effect', () => {
+    for (const p of policies) {
+      expect(String(p.issued_date ?? ''), String(p.title)).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(String(p.issued_date) <= String(p.effective_date), String(p.title)).toBe(true);
     }
   });
 });

@@ -9,7 +9,7 @@
 
 - **不能指向自己**：钩子 `brightrule_policy_parent`（`src/qa/policy-parent.hook.ts`，插入、更新前）拒绝，返回 400「上级制度不能选本制度自己，请改选另一份制度，或不填。」不改上级制度的保存不检查。
 - 更长的环（A → B → A）不检查（第 6 节待确认 1）。
-- 导入时自动匹配上级制度另行处理，本卡不做。示例数据里的五份制度都是集团制度，没有自然的上下级，所以种子不填这个字段。
+- 导入时自动匹配上级制度另行处理，本卡不做。示例数据里的五份集团制度没有自然的上下级，不填这个字段；#52 加的两份下属公司制度（转发、参照执行）指向对应的集团制度（见 [`policy-source-fields.md`](policy-source-fields.md) 第 5 节）。
 
 ## 2 AI 建议 `brightrule_policy_suggestion`
 
@@ -43,8 +43,8 @@ AI 诊断一份制度时提出的一条建议，主从挂在制度下（`sharing
 
 | 权限集 | 绑定方式 | 授予 |
 |---|---|---|
-| 问询人 `brightrule_inquirer` | `isDefault: true`：启动时自动绑定到平台内置的 `everyone` 岗位，即所有登录员工 | 读制度、读制度附件、读条款；新建问询、读问询（问询对象私有，只看得到自己的）。**AI 建议无任何权限，不授予任何能力** |
-| 制度管理员 `brightrule_policy_admin` | 按人分配：在 `sys_user_permission_set` 里加一行（用户、`permission_set: brightrule_policy_admin`），管理后台或 `POST /api/v1/data/sys_user_permission_set` | 制度、制度附件、条款、问询、AI 建议：增删改查，且看全部、改全部（越过共享）；能力「制度诊断」 |
+| 问询人 `brightrule_inquirer` | `isDefault: true`：启动时自动绑定到平台内置的 `everyone` 岗位，即所有登录员工 | 读制度、读制度附件、读条款；新建问询、读问询（问询对象私有，只看得到自己的）；读业务单元（#52，制度的所属单位显示名称）。**AI 建议无任何权限，不授予任何能力** |
+| 制度管理员 `brightrule_policy_admin` | 按人分配：在 `sys_user_permission_set` 里加一行（用户、`permission_set: brightrule_policy_admin`），管理后台或 `POST /api/v1/data/sys_user_permission_set` | 制度、制度附件、条款、问询、AI 建议：增删改查，且看全部、改全部（越过共享）；读业务单元（#52，选所属单位）；能力「制度诊断」 |
 
 **能力「制度诊断」 `brightrule.policy_diagnose`**（ADR-0066 三分：能力由包声明、权限集授予、资源要求）：
 

@@ -6,7 +6,8 @@ import { PolicySuggestion } from '../objects/policy-suggestion.object.js';
 import { assembleBody, textStats } from './document-text.js';
 
 // Sample policies — fictional demo data, loaded in dev and test only (never in
-// production). Lookups name their parent by its seed key (`title`).
+// production). Lookups name their parent by its seed key (`title`; a business
+// unit by its `name`).
 // A policy carries its own body (brightrule#45: no versions); its only child
 // is 制度附件. No inquiries are seeded: an inquiry is answered when it is
 // saved, so the demo asks its questions against the running app.
@@ -16,6 +17,34 @@ const L = '考勤与休假管理制度';
 const S = '信息安全管理规定';
 const G = '反商业贿赂与利益冲突管理规定';
 const C = '合同管理办法';
+// Three policies of two subsidiaries (brightrule#52): one forwards a group
+// policy, one follows another, and one is a trial policy of its own.
+const FC = `关于转发《${C}》的通知`;
+const RS = `关于参照执行《${S}》的通知`;
+const AR = '档案管理办法（试行）';
+
+// ── 业务单元 ────────────────────────────────────────────────────────────────
+// The units a policy belongs to (`owning_unit`, a lookup to the platform's
+// sys_business_unit): the group, whose 集团机关 issues the group policies, and
+// two subsidiaries under it. Names and codes are synthetic. The object is the
+// platform's, so the seed names it with the fields it writes rather than
+// importing its definition.
+const GROUP = '示例集团';
+const UNIT_A = '示例甲公司';
+const UNIT_B = '示例乙公司';
+const BusinessUnit = {
+  name: 'sys_business_unit',
+  fields: { name: {}, code: {}, kind: {}, parent_business_unit_id: {} },
+} as const;
+const businessUnits = defineSeed(BusinessUnit, {
+  env: ['dev', 'test'],
+  externalId: 'code',
+  records: [
+    { name: GROUP, code: 'DEMO-GROUP', kind: 'company' },
+    { name: UNIT_A, code: 'DEMO-A', kind: 'company', parent_business_unit_id: GROUP },
+    { name: UNIT_B, code: 'DEMO-B', kind: 'company', parent_business_unit_id: GROUP },
+  ],
+});
 
 type ClauseRow = [policy: string, no: string, title: string, content: string, keywords: string];
 
@@ -30,19 +59,33 @@ const CLAUSES: ClauseRow[] = [
   [S, '第九条', '外部 AI 工具', '禁止将内部及以上密级数据上传至未经信息技术部批准的外部网盘、翻译或 AI 工具。', 'AI 工具 数据外发 网盘 翻译'],
   [G, '第七条', '礼品收受', '员工不得收受价值超过 200 元的礼品；无法拒绝的，须在 3 个工作日内上交合规部登记。', '礼品 礼金 收礼'],
   [C, '第十五条', '法务审查', '合同金额 50 万元以上，或违约金超过合同金额 20% 的，须经法务部审查后方可签署。', '合同 法务 审查 签署'],
+  [FC, '第一条', '执行要求', '本单位签订的合同按集团《合同管理办法》执行；需法务审查的合同，由本单位综合办公室初审后报集团法务部。', '合同 转发 初审'],
+  [RS, '第一条', '参照范围', '本单位信息系统账号、数据分级与外部工具使用参照集团《信息安全管理规定》执行；本单位信息安全联络人由综合部指定。', '信息安全 参照执行 联络人'],
+  [AR, '第六条', '借阅登记', '借阅档案须填写借阅登记表，经部门负责人同意后借阅，借阅期限不超过 15 个工作日。', '档案 借阅 登记'],
 ];
 
+/** 试行: the title says 「试行」 or 「暂行」 — what src/qa/policy-trial.hook.ts derives on save. */
+const isTrial = (title: string) => /试行|暂行/.test(title);
+
+/** What every group policy's issuing notice says: issued by the group, sent to every unit. */
+const GROUP_ISSUE = { owning_unit: GROUP, issuance_type: 'issue', addressees: '集团机关各部室、各下属企业' };
+
 /**
- * The sample policies' own fields — the 制度信息表 of each, invented. Every
- * one is published; the related-documents text names one library policy and
- * one outside the library (a name only), as an imported info table does.
+ * The sample policies' own fields — the 制度信息表 and issuing notice of each,
+ * invented. Every one is published; the related-documents text names one
+ * library policy and one outside the library (a name only), as an imported
+ * info table does. The five group policies come first; the subsidiaries'
+ * forward and follow two of them (`parent_policy`, brightrule#48).
  */
 const POLICY_ROWS = [
-  { title: T, policy_no: 'FIN-001', doc_no: '示例集团财字〔2026〕3号', issuing_unit: '集团', category: 'finance', policy_level: '二级管理制度', department: '财务部', co_departments: '人力资源部', review_body: '总经理办公会', decision_body: '总经理办公会', related_documents: `《费用报销管理规定》、《${L}》`, status: 'published', effective_date: '2026-07-01', next_review_date: '2027-06-30', summary: '国内出差的住宿、交通、补贴标准与报销要求。' },
-  { title: L, policy_no: 'HR-002', doc_no: '示例集团人字〔2026〕1号', issuing_unit: '集团', category: 'hr', policy_level: '二级管理制度', department: '人力资源部', status: 'published', effective_date: '2026-03-01', next_review_date: '2027-02-28', summary: '工作时间、请假类型、年休假与审批权限。' },
-  { title: S, policy_no: 'IT-003', doc_no: '示例集团信字〔2026〕2号', issuing_unit: '集团', category: 'it', policy_level: '三级管理制度', department: '信息技术部', status: 'published', effective_date: '2026-05-15', next_review_date: '2026-12-15', summary: '账号口令、数据分级与外部工具使用要求。' },
-  { title: G, policy_no: 'CMP-004', doc_no: '示例集团合字〔2026〕4号', issuing_unit: '集团', category: 'compliance', policy_level: '二级管理制度', department: '合规部', review_body: '党委会', decision_body: '董事会', status: 'published', effective_date: '2026-04-01', next_review_date: '2027-03-31', summary: '礼品礼金收受标准与利益冲突申报。' },
-  { title: C, policy_no: 'CMP-005', doc_no: '示例集团法字〔2026〕5号', issuing_unit: '集团', category: 'compliance', policy_level: '三级管理制度', department: '法务部', related_documents: `《${G}》`, status: 'published', effective_date: '2026-06-01', next_review_date: '2027-05-31', summary: '合同起草、审查、签署与归档。' },
+  { title: T, ...GROUP_ISSUE, issued_date: '2026-06-20',  policy_no: 'FIN-001', doc_no: '示例集团财字〔2026〕3号', issuing_unit: '集团', category: 'finance', policy_level: '二级管理制度', department: '财务部', co_departments: '人力资源部', review_body: '总经理办公会', decision_body: '总经理办公会', related_documents: `《费用报销管理规定》、《${L}》`, status: 'published', effective_date: '2026-07-01', next_review_date: '2027-06-30', summary: '国内出差的住宿、交通、补贴标准与报销要求。' },
+  { title: L, ...GROUP_ISSUE, issued_date: '2026-02-20',  policy_no: 'HR-002', doc_no: '示例集团人字〔2026〕1号', issuing_unit: '集团', category: 'hr', policy_level: '二级管理制度', department: '人力资源部', status: 'published', effective_date: '2026-03-01', next_review_date: '2027-02-28', summary: '工作时间、请假类型、年休假与审批权限。' },
+  { title: S, ...GROUP_ISSUE, issued_date: '2026-05-08',  policy_no: 'IT-003', doc_no: '示例集团信字〔2026〕2号', issuing_unit: '集团', category: 'it', policy_level: '三级管理制度', department: '信息技术部', status: 'published', effective_date: '2026-05-15', next_review_date: '2026-12-15', summary: '账号口令、数据分级与外部工具使用要求。' },
+  { title: G, ...GROUP_ISSUE, issued_date: '2026-03-25',  policy_no: 'CMP-004', doc_no: '示例集团合字〔2026〕4号', issuing_unit: '集团', category: 'compliance', policy_level: '二级管理制度', department: '合规部', review_body: '党委会', decision_body: '董事会', status: 'published', effective_date: '2026-04-01', next_review_date: '2027-03-31', summary: '礼品礼金收受标准与利益冲突申报。' },
+  { title: C, ...GROUP_ISSUE, issued_date: '2026-05-26',  policy_no: 'CMP-005', doc_no: '示例集团法字〔2026〕5号', issuing_unit: '集团', category: 'compliance', policy_level: '三级管理制度', department: '法务部', related_documents: `《${G}》`, status: 'published', effective_date: '2026-06-01', next_review_date: '2027-05-31', summary: '合同起草、审查、签署与归档。' },
+  { title: FC, policy_no: 'A-LAW-001', doc_no: '示例甲司办字〔2026〕7号', issuing_unit: '示例甲公司', owning_unit: UNIT_A, issuance_type: 'forward', parent_policy: C, addressees: '本单位各部门、各项目部', category: 'compliance', policy_level: '三级管理制度', department: '综合办公室', status: 'published', issued_date: '2026-06-10', effective_date: '2026-06-10', next_review_date: '2027-06-09', summary: '转发集团合同管理办法，明确本单位的合同初审部门。' },
+  { title: RS, policy_no: 'B-IT-001', doc_no: '示例乙司综字〔2026〕4号', issuing_unit: '示例乙公司', owning_unit: UNIT_B, issuance_type: 'reference', parent_policy: S, addressees: '本单位各部门', category: 'it', policy_level: '三级管理制度', department: '综合部', status: 'published', issued_date: '2026-06-01', effective_date: '2026-06-01', next_review_date: '2026-12-31', summary: '参照执行集团信息安全管理规定，指定本单位信息安全联络人。' },
+  { title: AR, policy_no: 'B-ADM-002', doc_no: '示例乙司综字〔2026〕9号', issuing_unit: '示例乙公司', owning_unit: UNIT_B, issuance_type: 'issue', addressees: '本单位各部门', category: 'admin', policy_level: '三级管理制度', department: '综合部', status: 'published', issued_date: '2026-08-15', effective_date: '2026-09-01', next_review_date: '2027-08-31', summary: '档案的归档、保管与借阅；试行一年。' },
 ];
 
 /** A policy row with its body: Markdown, article index and sizes (its original is seeded apart, below). */
@@ -52,7 +95,7 @@ const withBody = (p: (typeof POLICY_ROWS)[number]) => {
     CLAUSES.filter(([policy]) => policy === p.title).map(([, no, title, text]) => ({ no, title, text })),
   );
   const { text_chars, text_tokens } = textStats(markdown);
-  return { ...p, body_md: markdown, article_index: articleIndex, text_chars, text_tokens, has_images: false };
+  return { ...p, is_trial: isTrial(p.title), body_md: markdown, article_index: articleIndex, text_chars, text_tokens, has_images: false };
 };
 
 const policies = defineSeed(Policy, {
@@ -100,10 +143,22 @@ const ORIGINAL_SHA256: Record<string, string> = {
   'security-body.txt': '49682f1344b629088a02524ddf7eeebb9c0298017441f45ccd2aed4104a26d6e',
   'gifts-body.txt': '980181cfe3c2c5e82379258fa343d50cc96dbedcb78bd310537d1163ff635343',
   'contract-body.txt': '15f3e4dcac9ef3b0eebd0b82eda5c57c71229fa32b0ee6e1a67547d91ee6c3bf',
+  'a-contract-forward-body.txt': '775913dfbec40968c91b78f7d687bb29ca31187d1660687308c580b6079774bd',
+  'b-security-reference-body.txt': '4f4c4ab0937a95a5bbb1a7360f15da9a21f752c2a2978c7908529cf3dbf5a988',
+  'b-archives-body.txt': '05b7ded8c4cd1147d1f0d7bb23eb277724bcc0f50eac0020be4b2b6a0dae9627',
 };
 
 /** The file-name stem of each sample policy's placeholders. */
-const FILE_STEM: Record<string, string> = { [T]: 'travel', [L]: 'leave', [S]: 'security', [G]: 'gifts', [C]: 'contract' };
+const FILE_STEM: Record<string, string> = {
+  [T]: 'travel',
+  [L]: 'leave',
+  [S]: 'security',
+  [G]: 'gifts',
+  [C]: 'contract',
+  [FC]: 'a-contract-forward',
+  [RS]: 'b-security-reference',
+  [AR]: 'b-archives',
+};
 
 const originalOf = (file: string, name: string) =>
   original(`fixtures/originals/${file}`, name, ORIGINAL_SHA256[file]);
@@ -205,4 +260,4 @@ const suggestions = defineSeed(PolicySuggestion, {
   ],
 });
 
-export const BrightRuleSeedData = [policies, policyOriginals, attachments, clauses, suggestions];
+export const BrightRuleSeedData = [businessUnits, policies, policyOriginals, attachments, clauses, suggestions];

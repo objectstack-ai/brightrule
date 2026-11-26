@@ -16,6 +16,12 @@ import { ObjectSchema, Field } from '@objectstack/spec/data';
  * original is never stored as a text field: a text field a person can read is
  * one the AI reads on their behalf.
  *
+ * The fields an issuing notice carries (brightrule#52, docs/policy-source-fields.md):
+ * `owning_unit` 所属单位 (a lookup to the platform business unit — the anchor
+ * of per-company visibility), `issued_date`, `issuance_type` (印发 / 转发 /
+ * 参照执行), `addressees` (主送, verbatim) and `is_trial`, which a hook derives
+ * from the title (src/qa/policy-trial.hook.ts).
+ *
  * `parent_policy` (上级制度, brightrule#48) names the group policy this one
  * forwards or follows, or the policy above it in the hierarchy; a policy that
  * names itself is refused (src/qa/policy-parent.hook.ts). The findings of AI
@@ -58,6 +64,16 @@ export const Policy = ObjectSchema.create({
       group: 'basic',
       description: '发文字号，如「XX字〔2026〕1号」；引用出处时写在制度名之后',
     }),
+    issuance_type: Field.select({
+      label: '文件性质',
+      group: 'basic',
+      description: '本单位自己印发的，还是转发、参照执行上级单位的制度；转发、参照执行的，在「上级制度」里指向被转发的制度',
+      options: [
+        { label: '印发', value: 'issue', default: true },
+        { label: '转发', value: 'forward' },
+        { label: '参照执行', value: 'reference' },
+      ],
+    }),
     category: Field.select({
       label: '制度分类',
       group: 'basic',
@@ -80,11 +96,31 @@ export const Policy = ObjectSchema.create({
       ],
     }),
     policy_level: Field.text({ label: '制度层级', maxLength: 50, group: 'basic', description: '制度信息表里的写法，如「三级管理制度」' }),
-    issuing_unit: Field.text({ label: '发文单位', maxLength: 100, group: 'basic' }),
+    // A lookup to the platform's business unit (sys_business_unit), so the
+    // per-company sharing rules (docs/visibility.md, dimension 2) can name the
+    // unit and the units under it. `restrict`: a unit that still owns policies
+    // cannot be deleted. No unit name is written in this metadata.
+    owning_unit: Field.lookup('sys_business_unit', {
+      label: '所属单位',
+      group: 'basic',
+      deleteBehavior: 'restrict',
+      description: '本制度属于哪家单位（集团机关或某下属公司），取自制度文件所在的目录；按单位隔离可见性以它为准',
+    }),
+    issuing_unit: Field.text({
+      label: '发文单位',
+      maxLength: 100,
+      group: 'basic',
+      description: '制度信息表、发文通知上的写法，原文照录；按单位隔离看「所属单位」',
+    }),
     department: Field.text({ label: '归口部门', maxLength: 100, group: 'basic' }),
     co_departments: Field.text({ label: '协同部门', maxLength: 200, group: 'basic' }),
     review_body: Field.text({ label: '审议主体', maxLength: 100, group: 'basic' }),
     decision_body: Field.text({ label: '决议主体', maxLength: 100, group: 'basic' }),
+    addressees: Field.textarea({
+      label: '主送',
+      group: 'basic',
+      description: '发文通知的主送单位，原文照录，如「集团机关各部室、各下属企业」',
+    }),
     summary: Field.textarea({
       label: '目录摘要',
       group: 'basic',
@@ -100,6 +136,16 @@ export const Policy = ObjectSchema.create({
         { label: '已废止', value: 'abolished', color: '#EF4444' },
       ],
     }),
+    // Derived from the title on insert and when the title changes
+    // (src/qa/policy-trial.hook.ts); not `readonly`, which would strip the
+    // hook's write and a maintainer's correction alike.
+    is_trial: Field.boolean({
+      label: '试行',
+      defaultValue: false,
+      group: 'effect',
+      description: '标题含「试行」或「暂行」即为是；新建、改标题时自动判断，不用手工勾选',
+    }),
+    issued_date: Field.date({ label: '印发日期', group: 'effect', description: '发文通知落款的日期，与生效日期不同' }),
     effective_date: Field.date({ label: '生效日期', group: 'effect' }),
     next_review_date: Field.date({ label: '下次复审日', group: 'effect' }),
 

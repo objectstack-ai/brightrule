@@ -29,6 +29,9 @@ export const PolicyAdminPermissionSet = definePermissionSet({
     brightrule_clause: ALL,
     brightrule_question: ALL,
     brightrule_policy_suggestion: ALL,
+    // Read only: the 所属单位 picker lists the units (brightrule#52); the
+    // units are maintained by the platform's administrators.
+    sys_business_unit: { allowRead: true },
   },
   systemPermissions: [POLICY_DIAGNOSE_CAPABILITY],
 });

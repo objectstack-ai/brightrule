@@ -4,9 +4,9 @@ import { definePermissionSet } from '@objectstack/spec/security';
  * 问询人 — what every signed-in employee may do (brightrule#48), the app's
  * baseline: `isDefault` binds it to the built-in `everyone` position at boot.
  *
- * Minimal on purpose: read policies, their attachments and clauses; ask a
- * question and see only one's own (the inquiry object is private); read the
- * business units policies belong to. Nothing on
+ * Minimal on purpose: read policies and their attachments, and the business
+ * units policies belong to. Employees ask in the AI chat, which reads the
+ * policies on their behalf (brightrule#19: no inquiry or clause object). Nothing on
  * 「AI 建议」 and no capability, so the 「AI 诊断」 action is hidden from and
  * refused to an employee.
  *
@@ -17,13 +17,11 @@ import { definePermissionSet } from '@objectstack/spec/security';
 export const InquirerPermissionSet = definePermissionSet({
   name: 'brightrule_inquirer',
   label: '问询人',
-  description: '员工默认权限：读制度、制度附件和条款；新建问询，只看自己的问询',
+  description: '员工默认权限：读制度和制度附件',
   isDefault: true,
   objects: {
     brightrule_policy: { allowRead: true },
     brightrule_policy_attachment: { allowRead: true },
-    brightrule_clause: { allowRead: true },
-    brightrule_question: { allowCreate: true, allowRead: true },
     // The business units a policy belongs to (`owning_unit`, brightrule#52):
     // read only, so the unit's name shows on the policy. The units themselves
     // are maintained by the platform's administrators.

@@ -20,24 +20,15 @@ importers:
       '@objectstack/core':
         specifier: 18.6.0
         version: 18.6.0
-      '@objectstack/embedder-openai':
-        specifier: 18.6.0
-        version: 18.6.0
       '@objectstack/plugin-hono-server':
         specifier: 18.6.0
         version: 18.6.0
       '@objectstack/runtime':
         specifier: 18.6.0
         version: 18.6.0(@better-auth/utils@0.5.0)(@better-fetch/fetch@1.3.2)(better-call@1.4.4(zod@4.6.7))(better-sqlite3@13.2.0)(kysely@0.29.9)(mongodb@7.9.1)(nanostores@1.5.5)(pg@8.23.1)(vitest@4.1.12(@types/node@22.20.5)(vite@8.3.8(@types/node@22.20.5)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1)))
-      '@objectstack/service-knowledge':
-        specifier: 18.6.0
-        version: 18.6.0
       '@objectstack/spec':
         specifier: 18.6.0
         version: 18.6.0
-      pg:
-        specifier: ^8.23.1
-        version: 8.23.1
     devDependencies:
       '@objectstack/cli':
         specifier: 18.6.0
@@ -51,9 +42,6 @@ importers:
       '@types/node':
         specifier: ^22.20.5
         version: 22.20.5
-      '@types/pg':
-        specifier: ^8.23.1
-        version: 8.23.1
       typescript:
         specifier: ^5.3.0
         version: 5.9.3
@@ -488,10 +476,6 @@ packages:
     resolution: {integrity: sha512-EIUAmDYO7xMcgSfilc7D459/+oD5ZQyzD4AkNIiWj0B4+o/xr9wcnFyb42hMj4c/BnkKv5bCt+TV7gkLdn15ZQ==}
     engines: {node: '>=22.0.0'}
 
-  '@objectstack/embedder-openai@18.6.0':
-    resolution: {integrity: sha512-cjzbPfmsQXt/zSFSEJOwhszmouMTta/tFN7H1tujUVLW2hhGhpsUGc91mw58X9FK7/KGZyb7Z1hflqltefU/uw==}
-    engines: {node: '>=22.0.0'}
-
   '@objectstack/formula@18.6.0':
     resolution: {integrity: sha512-mSrAAu8PHV4gzw/RmwKnqmHZGXfRO/xG2pSRaew/FohaNvTWezdmfD64Tyk+/I/ACB2RkjcKyNBlPvsjY1kSGQ==}
     engines: {node: '>=22.0.0'}
@@ -622,10 +606,6 @@ packages:
 
   '@objectstack/service-job@18.6.0':
     resolution: {integrity: sha512-ILuxzMUpKqbLXitY3slzHvThXaqdeqO0Na7iuVT+YupxlGH1tmYIO5rRdq6vm1XPm6uXrtBnI3baCbgwuYF9kg==}
-    engines: {node: '>=22.0.0'}
-
-  '@objectstack/service-knowledge@18.6.0':
-    resolution: {integrity: sha512-oJFytFb4DrULYlABxgp5N9SUNIGGIYhjlDYCRJttmJxqvy9gCIjkYs5od6vnHXWbIbOGlG4uqSO3anI4TN80vg==}
     engines: {node: '>=22.0.0'}
 
   '@objectstack/service-mailbox@18.6.0':
@@ -834,9 +814,6 @@ packages:
 
   '@types/node@22.20.5':
     resolution: {integrity: sha512-U2+DNr+wSjpsTS/wZGYHq7GcwfuSmKiKvoPvK22zwTlRhU91yOniN4qRR5KhIjvif7ysw/dz/hKmfDH0Ris4aA==}
-
-  '@types/pg@8.23.1':
-    resolution: {integrity: sha512-fKVHpikPdg4GKks3JuLEhvwSyvwzF23hnabPy6DD8ljVbC7+6J5dQzdv4arV6jqq57djnMgs1HKBxX4P8aBI3A==}
 
   '@types/webidl-conversions@7.0.3':
     resolution: {integrity: sha512-CiJJvcRtIgzadHCYXw7dqEnMNRjhGZlYK05Mj9OyktqV8uVT8fD2BFOB7S1uwBE3Kj2Z+4UyPmFw/Ixgw/LAlA==}
@@ -3302,12 +3279,6 @@ snapshots:
       - supports-color
       - tedious
 
-  '@objectstack/embedder-openai@18.6.0':
-    dependencies:
-      '@objectstack/spec': 18.6.0
-    transitivePeerDependencies:
-      - ai
-
   '@objectstack/formula@18.6.0':
     dependencies:
       '@marcbachmann/cel-js': 8.0.0
@@ -3738,13 +3709,6 @@ snapshots:
     transitivePeerDependencies:
       - ai
 
-  '@objectstack/service-knowledge@18.6.0':
-    dependencies:
-      '@objectstack/core': 18.6.0
-      '@objectstack/spec': 18.6.0
-    transitivePeerDependencies:
-      - ai
-
   '@objectstack/service-mailbox@18.6.0':
     dependencies:
       '@objectstack/connector-imap': 18.6.0
@@ -4078,12 +4042,6 @@ snapshots:
   '@types/node@22.20.5':
     dependencies:
       undici-types: 6.21.0
-
-  '@types/pg@8.23.1':
-    dependencies:
-      '@types/node': 22.20.5
-      pg-protocol: 1.16.1
-      pg-types: 2.2.0
 
   '@types/webidl-conversions@7.0.3': {}
 
@@ -5301,13 +5259,16 @@ snapshots:
 
   pg-connection-string@2.6.2: {}
 
-  pg-int8@1.0.1: {}
+  pg-int8@1.0.1:
+    optional: true
 
   pg-pool@3.14.0(pg@8.23.1):
     dependencies:
       pg: 8.23.1
+    optional: true
 
-  pg-protocol@1.16.1: {}
+  pg-protocol@1.16.1:
+    optional: true
 
   pg-types@2.2.0:
     dependencies:
@@ -5316,6 +5277,7 @@ snapshots:
       postgres-bytea: 1.0.1
       postgres-date: 1.0.7
       postgres-interval: 1.2.0
+    optional: true
 
   pg@8.23.1:
     dependencies:
@@ -5326,10 +5288,12 @@ snapshots:
       pgpass: 1.0.5
     optionalDependencies:
       pg-cloudflare: 1.4.1
+    optional: true
 
   pgpass@1.0.5:
     dependencies:
       split2: 4.2.0
+    optional: true
 
   picocolors@1.1.1: {}
 
@@ -5351,15 +5315,19 @@ snapshots:
       picocolors: 1.1.1
       source-map-js: 1.2.4
 
-  postgres-array@2.0.0: {}
+  postgres-array@2.0.0:
+    optional: true
 
-  postgres-bytea@1.0.1: {}
+  postgres-bytea@1.0.1:
+    optional: true
 
-  postgres-date@1.0.7: {}
+  postgres-date@1.0.7:
+    optional: true
 
   postgres-interval@1.2.0:
     dependencies:
       xtend: 4.0.2
+    optional: true
 
   powershell-utils@0.1.0: {}
 
@@ -5628,7 +5596,8 @@ snapshots:
     dependencies:
       memory-pager: 1.5.0
 
-  split2@4.2.0: {}
+  split2@4.2.0:
+    optional: true
 
   sql.js@1.17.0: {}
 
@@ -5995,7 +5964,8 @@ snapshots:
 
   xpath@0.0.35: {}
 
-  xtend@4.0.2: {}
+  xtend@4.0.2:
+    optional: true
 
   yaml@2.9.1: {}
 

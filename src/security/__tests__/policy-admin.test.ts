@@ -66,14 +66,6 @@ describe('制度管理员 and 问询人 on the engine', () => {
     ).rejects.toMatchObject({ code: 'PERMISSION_DENIED' });
   });
 
-  it('lets an employee ask a question and read only their own', async () => {
-    const mine = (await stack.hooks.run('brightrule_question', 'insert', { question: '出差住宿标准是多少？' }, { as: employee })) as Row;
-    const theirs = (await stack.hooks.run('brightrule_question', 'insert', { question: '年假怎么计算？' }, { as: officer })) as Row;
-    const seen = ((await stack.rows('brightrule_question', {}, { as: employee })) as Row[]).map((q) => q.id);
-    expect(seen).toContain(mine.id);
-    expect(seen).not.toContain(theirs.id);
-  });
-
   it('refuses the AI diagnosis to an employee with 403, and answers the administrator', async () => {
     await expect(
       stack.actions.run('brightrule_policy', DIAGNOSE, { as: employee, recordId: String(policy.id) }),

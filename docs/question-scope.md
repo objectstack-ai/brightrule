@@ -1,5 +1,7 @@
 # 问询记录的范围、依据与防伪造（`brightrule_question`）设计说明
 
+> **已下线（brightrule#19，2026-11-26）**：问询对象 `brightrule_question`、它的钩子、视图和转人工动作都已删除，问询由 AI 直接读制度正文作答。本文只作历史记录。
+
 > **#45 更新（2026-11-25）**：版本已删除，`scope_version` 随之去掉；`scope_kind` 只剩「通用 / 指定制度」；指定的制度不是已发布的，范围钩子拒绝（`QUESTION_SCOPE_POLICY_NOT_PUBLISHED`，制度不存在或读不到为 `QUESTION_SCOPE_POLICY_NOT_FOUND`）；`basis` 为 `[{ policy, article, quote }]`。防伪造钩子不变。下文中涉及版本的部分仅作历史记录。
 
 > 状态：**待维护者在 PR 上确认。**对应 issue #27（专题 #3；详细设计《制度问询与知识检索》2.3「问询对象的改动」、B1.4）。同一分支上另有 #22 的 [`policy-document.md`](policy-document.md)、#23 的 [`policy-relation.md`](policy-relation.md)。

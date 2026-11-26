@@ -17,11 +17,10 @@ import { POLICY_DIAGNOSE_CAPABILITY } from '../security/capabilities.js';
 // Navigation follows the two audiences (docs/review-2026-11-24.md, M1/M2):
 // employees see the library; policy administrators get 「制度维护」. 制度附件
 // is the policy's master-detail child: it is read on the policy's record page,
-// not from a menu of its own. The inquiry object stays, but has no entry of its
-// own (brightrule#45: 「我的问询」「待人工答复」 were removed, as were the version
-// and relation queues with their objects). The clause table is being retired
-// (D6, #19) and the Notes sample is to be deleted (#10), so neither has an
-// entry. The first item is where the app opens. 「AI 建议」 is served only to
+// not from a menu of its own. Employees ask in the AI chat; the inquiry and
+// clause objects are gone (brightrule#19), as are the version and relation
+// queues (brightrule#45). The Notes sample is to be deleted (#10), so it has
+// no entry. The first item is where the app opens. 「AI 建议」 is served only to
 // policy administrators (brightrule#48); hiding the rest of 「制度维护」 from
 // employees waits for the visibility rules (#10).
 const mainApp: UI.App = {

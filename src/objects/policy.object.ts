@@ -33,8 +33,9 @@ import { ObjectSchema, Field } from '@objectstack/spec/data';
  * diagnosis are a second child, 「AI 建议」 (`brightrule_policy_suggestion`),
  * which only policy administrators see (docs/policy-admin.md).
  *
- * Changing `status` carries to the clause rows of the policy (`is_current`,
- * src/qa/policy-status.hook.ts) while the clause table lives (brightrule#19).
+ * `status` decides whether the AI answers from a policy: only a published
+ * one (src/skills/policy-inquiry.skill.ts). There is no clause table
+ * (brightrule#19): the articles live in `body_md`, indexed by `article_index`.
  *
  * Named `brightrule_policy`, never bare `policy`: on this platform *policy*
  * means a permission / security policy (AGENTS.md).

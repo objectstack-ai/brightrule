@@ -5,7 +5,5 @@
 export {};
 export { default as note } from './note.view';
 export { default as policy } from './policy.view';
-export { default as clause } from './clause.view';
-export { default as question } from './question.view';
 export { default as policyAttachment } from './policy-attachment.view';
 export { default as policySuggestion } from './policy-suggestion.view';

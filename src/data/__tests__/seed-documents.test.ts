@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { BrightRuleSeedData } from '../seed.js';
+import { ARTICLES, BrightRuleSeedData } from '../seed.js';
 import { CHARS_PER_TOKEN, countChars, estimateTokens, type ArticleIndexEntry } from '../document-text.js';
 
 type Row = Record<string, unknown>;
@@ -15,9 +15,8 @@ const policyOriginals = (BrightRuleSeedData.filter((s) => s.object === 'brightru
 const packageRoot = fileURLToPath(new URL('../../../', import.meta.url));
 
 describe('the seeded policy bodies', () => {
-  it('seed no version or relation object: the body is on the policy (brightrule#45)', () => {
+  it('seed no version, relation or clause object: the body is on the policy (brightrule#45, #19)', () => {
     expect(BrightRuleSeedData.map((s) => s.object).sort()).toEqual([
-      'brightrule_clause',
       'brightrule_policy',
       'brightrule_policy',
       'brightrule_policy_attachment',
@@ -34,26 +33,17 @@ describe('the seeded policy bodies', () => {
     }
   });
 
-  it("index every clause of the policy at the offsets where the body holds it", () => {
-    const clauses = rows('brightrule_clause');
+  it("index every article of the policy at the offsets where the body holds it", () => {
     for (const p of policies) {
       const body = Array.from(String(p.body_md));
       const index = p.article_index as ArticleIndexEntry[];
-      const ownClauses = clauses.filter((c) => c.policy === p.title);
-      expect(index.map((e) => e.article)).toEqual(ownClauses.map((c) => String(c.citation).split('》').pop()));
+      const own = ARTICLES.filter(([policy]) => policy === p.title);
+      expect(index.map((e) => e.article)).toEqual(own.map(([, no]) => no));
       index.forEach((entry, i) => {
         const span = body.slice(...entry.redacted).join('');
         expect(span.startsWith(`**${entry.article}**`)).toBe(true);
-        expect(span.endsWith(String(ownClauses[i].content))).toBe(true);
+        expect(span.endsWith(own[i][3])).toBe(true);
       });
-    }
-  });
-
-  it('mark the clauses of a published policy current, as the clause hook would', () => {
-    for (const c of rows('brightrule_clause')) {
-      const policy = policies.find((p) => p.title === c.policy);
-      expect(c.is_current).toBe(policy?.status === 'published');
-      expect(c).not.toHaveProperty('policy_version');
     }
   });
 

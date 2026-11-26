@@ -6,10 +6,9 @@ import { defineSkill } from '@objectstack/spec';
  *
  * The model reads the WHOLE redacted body of the policy
  * (`brightrule_policy.body_md`, plus its attachments in
- * `brightrule_policy_attachment`), not clause rows (brightrule#18). Imported
- * policies have no clause rows at all, so a skill that read
- * `brightrule_clause` answered "no content" for every one. There are no
- * versions: a policy is in force when it is published (brightrule#45).
+ * `brightrule_policy_attachment`) (brightrule#18); there is no clause table
+ * (brightrule#19). There are no versions: a policy is in force when it is
+ * published (brightrule#45).
  *
  * It reads through `query_records` / `get_record`, which run under the asker's
  * own permissions and row-level security, so a policy the asker cannot see
@@ -34,7 +33,6 @@ export const PolicyInquirySkill = defineSkill({
 - 制度目录：对象 brightrule_policy。只看 status = "published" 的制度；读目录时只取字段 id、title、doc_no、category_group、category、policy_level、issuing_unit、department、summary、effective_date，不要带 body_md（正文很长，读正文时再取）。status 的取值：published 已发布（可据以作答）、draft 草稿（还未发布）、revising 修订中、abolished 已废止（不再有效，不据以作答）。summary 是一两句话的目录摘要，可能为空，为空不代表没有正文。category_group 是制度大类：governance 治理类、operations 经营管理类、party 党工纪类；category 是其下的制度分类（小类）。policy_level 是制度层级：level_1 一级（公司基本管理制度）、level_2 二级（部门基本制度）、level_3 三级（配套管理细则），可能为空。
 - 制度正文：就在制度记录上，字段 body_md（Markdown，已脱敏）。doc_no 是文号，引用出处时写在制度名之后。has_images = true 表示正文里有图片等内容（正文里只留「（图片）」等标记），你看不到；问题恰好涉及这些位置时，照实说明需查看原件。
 - 附件：对象 brightrule_policy_attachment（制度附件），挂在制度下（字段 policy）。label 是原文里的编号（附件1、附表2），title 是附件自己的名称，body_md 是附件全文（已脱敏，可能为空）。附件与正文一起读；只是待填写的空白表格的，不作答复依据，只告诉员工有这个表。
-- 条款对象 brightrule_clause 不是正文来源：导入的制度没有条款记录，不要用它判断一份制度「没有内容」。
 - 不读 original_file（原件文件），也不调用 read_file：交给你的只能是脱敏正文。
 
 ## 读一份制度的正文

@@ -29,9 +29,10 @@ import { ObjectSchema, Field } from '@objectstack/spec/data';
  *
  * `parent_policy` (上级制度, brightrule#48) names the group policy this one
  * forwards or follows, or the policy above it in the hierarchy; a policy that
- * names itself is refused (src/qa/policy-parent.hook.ts). The findings of AI
- * diagnosis are a second child, 「AI 建议」 (`brightrule_policy_suggestion`),
- * which only policy administrators see (docs/policy-admin.md).
+ * names itself is refused (src/qa/policy-parent.hook.ts). Opinions on a
+ * policy — AI diagnosis findings and employees' own — are 「制度意见」
+ * (`brightrule_policy_suggestion`, docs/policy-suggestion.md), which look the
+ * policy up rather than hang under it.
  *
  * `status` decides whether the AI answers from a policy: only a published
  * one (src/skills/policy-inquiry.skill.ts). There is no clause table

@@ -21,6 +21,7 @@ export const POLICY_DIAGNOSE_CAPABILITY = 'brightrule.policy_diagnose';
 export const PolicyDiagnoseCapability = defineCapability({
   name: POLICY_DIAGNOSE_CAPABILITY,
   label: '制度诊断',
-  description: '在制度上运行 AI 诊断，把诊断建议写入该制度的「AI 建议」',
+  description: '在制度上运行 AI 诊断，把诊断结果写入「制度意见」',
   scope: 'org',
 });
+

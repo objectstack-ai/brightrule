@@ -5,7 +5,7 @@ import { POLICY_DIAGNOSE_CAPABILITY } from '../security/capabilities.js';
 export const DIAGNOSE_PENDING_MESSAGE = 'AI 诊断功能开发中';
 
 /**
- * AI 诊断 — diagnose a policy and file what is found as its 「AI 建议」
+ * AI 诊断 — diagnose a policy and file what is found as 「制度意见」
  * (brightrule#48, docs/policy-admin.md).
  *
  * A placeholder for now: the body writes nothing (it is granted no `ctx.api`

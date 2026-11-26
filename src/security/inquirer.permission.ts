@@ -5,7 +5,8 @@ import { definePermissionSet } from '@objectstack/spec/security';
  * baseline: `isDefault` binds it to the built-in `everyone` position at boot.
  *
  * Minimal on purpose: read policies, their attachments and clauses; ask a
- * question and see only one's own (the inquiry object is private). Nothing on
+ * question and see only one's own (the inquiry object is private); read the
+ * business units policies belong to. Nothing on
  * 「AI 建议」 and no capability, so the 「AI 诊断」 action is hidden from and
  * refused to an employee.
  *
@@ -23,5 +24,9 @@ export const InquirerPermissionSet = definePermissionSet({
     brightrule_policy_attachment: { allowRead: true },
     brightrule_clause: { allowRead: true },
     brightrule_question: { allowCreate: true, allowRead: true },
+    // The business units a policy belongs to (`owning_unit`, brightrule#52):
+    // read only, so the unit's name shows on the policy. The units themselves
+    // are maintained by the platform's administrators.
+    sys_business_unit: { allowRead: true },
   },
 });

@@ -228,9 +228,9 @@ const attachments = defineSeed(PolicyAttachment, {
   ],
 });
 
-// ── AI 建议 ────────────────────────────────────────────────────────────────
-// Two suggestions on the travel policy, as a diagnosis run would file them
-// (brightrule#48). Written by hand — the 「AI 诊断」 action does not diagnose
+// ── 制度意见 ───────────────────────────────────────────────────────────────
+// Two opinions on the travel policy, as a diagnosis run would file them
+// (brightrule#48, #57). 大类 is written out; the intake hook derives the same. Written by hand — the 「AI 诊断」 action does not diagnose
 // yet — and marked so in `run_info`. The quotes are the seeded article text.
 const DIAGNOSIS_BATCH = 'seed-20261126';
 const suggestions = defineSeed(PolicySuggestion, {
@@ -239,6 +239,8 @@ const suggestions = defineSeed(PolicySuggestion, {
   records: [
     {
       policy: T,
+      source: 'ai_diagnosis',
+      category_group: 'defect',
       category: 'ambiguity',
       severity: 'medium',
       article: '第十一条',
@@ -252,6 +254,8 @@ const suggestions = defineSeed(PolicySuggestion, {
     },
     {
       policy: T,
+      source: 'ai_diagnosis',
+      category_group: 'defect',
       category: 'cross_policy_conflict',
       severity: 'low',
       article: '第八条',

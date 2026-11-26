@@ -29,9 +29,10 @@ import { ObjectSchema, Field } from '@objectstack/spec/data';
  *
  * `parent_policy` (上级制度, brightrule#48) names the group policy this one
  * forwards or follows, or the policy above it in the hierarchy; a policy that
- * names itself is refused (src/qa/policy-parent.hook.ts). The findings of AI
- * diagnosis are a second child, 「AI 建议」 (`brightrule_policy_suggestion`),
- * which only policy administrators see (docs/policy-admin.md).
+ * names itself is refused (src/qa/policy-parent.hook.ts). Opinions on a
+ * policy — AI diagnosis findings and employees' own — are 「制度意见」
+ * (`brightrule_policy_suggestion`, docs/policy-suggestion.md), which look the
+ * policy up rather than hang under it.
  *
  * `status` decides whether the AI answers from a policy: only a published
  * one (src/skills/policy-inquiry.skill.ts). There is no clause table
@@ -193,12 +194,17 @@ export const Policy = ObjectSchema.create({
       label: '上级制度',
       group: 'related',
       description: '本制度转发、参照执行的集团制度，或层级上的上位制度；单选，不能选本制度自己',
+      // The reverse list on the parent's page: the policies under it.
+      relatedListTitle: '下级制度',
     }),
     related_policies: Field.lookup('brightrule_policy', {
       label: '相关制度',
       group: 'related',
       multiple: true,
       description: '「关联制度 / 文件」里名称与库内制度完全一致的制度，由导入工具自动填写',
+      // No reverse list: the forward field already shows the relation, and a
+      // list of 「policies naming this one」 only confused readers.
+      relatedList: false,
     }),
 
     body_md: Field.markdown({

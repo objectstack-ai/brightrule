@@ -17,6 +17,7 @@ const policyViews: UI.View = {
       { field: 'category' },
       { field: 'issuing_unit' },
       { field: 'department' },
+      { field: 'parent_policy' },
       { field: 'status' },
       { field: 'effective_date' },
       { field: 'has_images' },

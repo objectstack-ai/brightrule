@@ -6,7 +6,7 @@ import { ObjectSchema, Field } from '@objectstack/spec/data';
  * The data comes from the policy file itself — its body and its 制度信息表
  * (policy info table) — through the import tool (`tools/redact`); nobody
  * re-keys it by hand. So the policy is one flat table: the body is a field of
- * the policy (`body_md`), and its only child is 制度附件
+ * the policy (`body_md`), and the only child that carries its text is 制度附件
  * (`brightrule_policy_attachment`, master-detail). There are no versions: a
  * revision overwrites the body, and the original file (`original_file`) is the
  * archive of what was issued.
@@ -15,6 +15,12 @@ import { ObjectSchema, Field } from '@objectstack/spec/data';
  * `body_md` is the redacted Markdown produced offline by `tools/redact`. The
  * original is never stored as a text field: a text field a person can read is
  * one the AI reads on their behalf.
+ *
+ * `parent_policy` (上级制度, brightrule#48) names the group policy this one
+ * forwards or follows, or the policy above it in the hierarchy; a policy that
+ * names itself is refused (src/qa/policy-parent.hook.ts). The findings of AI
+ * diagnosis are a second child, 「AI 建议」 (`brightrule_policy_suggestion`),
+ * which only policy administrators see (docs/policy-admin.md).
  *
  * Changing `status` carries to the clause rows of the policy (`is_current`,
  * src/qa/policy-status.hook.ts) while the clause table lives (brightrule#19).
@@ -103,6 +109,11 @@ export const Policy = ObjectSchema.create({
       label: '关联制度 / 文件',
       group: 'related',
       description: '制度信息表「关联制度 / 文件」一栏的原文，含库外的法规和文件',
+    }),
+    parent_policy: Field.lookup('brightrule_policy', {
+      label: '上级制度',
+      group: 'related',
+      description: '本制度转发、参照执行的集团制度，或层级上的上位制度；单选，不能选本制度自己',
     }),
     related_policies: Field.lookup('brightrule_policy', {
       label: '相关制度',

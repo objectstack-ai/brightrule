@@ -21,6 +21,7 @@ describe('the seeded policy bodies', () => {
       'brightrule_policy',
       'brightrule_policy',
       'brightrule_policy_attachment',
+      'brightrule_policy_suggestion',
     ]);
   });
 

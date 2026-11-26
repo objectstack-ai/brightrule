@@ -24,8 +24,8 @@ const afterCreate = P`has(record.id)`;
  *     the person asking: the answer guard (src/qa/question-guard.hook.ts)
  *     strips them from a person's own write.
  *
- * Private: the person asking sees only their own questions. Who else may read
- * them (the policy office) is the permission sets' job (brightrule#10).
+ * Private: the person asking sees only their own questions (问询人,
+ * src/security); the policy office reads them all (制度管理员, brightrule#48).
  * None of the hook-maintained fields is `readonly`: the platform strips a
  * readonly field from every non-system write, which would also strip the
  * in-product AI's write on the person's behalf.

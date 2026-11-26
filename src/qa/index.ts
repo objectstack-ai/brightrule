@@ -6,6 +6,7 @@ import { ANSWER_QUESTION_FUNCTION, answerQuestion, QuestionAnswerHook } from './
 import { QuestionGuardHook } from './question-guard.hook.js';
 import { QuestionScopeHook } from './question-scope.hook.js';
 import { ClauseCurrentHook, PolicyStatusHook } from './policy-status.hook.js';
+import { PolicyParentHook } from './policy-parent.hook.js';
 import { KnowledgeVectorPlugin } from './vector/plugin.js';
 
 /**
@@ -28,7 +29,8 @@ export function policyQaPlugins(): unknown[] {
 /**
  * Lifecycle hooks: strip a person's forged answer, check the question's scope,
  * then answer it on save (the order is each hook's declared `priority`, not
- * this list's); keep clause currency in step with the policy's status.
+ * this list's); keep clause currency in step with the policy's status; refuse
+ * a policy that names itself as its 上级制度.
  */
 export const policyQaHooks = [
   QuestionGuardHook,
@@ -36,6 +38,7 @@ export const policyQaHooks = [
   QuestionAnswerHook,
   PolicyStatusHook,
   ClauseCurrentHook,
+  PolicyParentHook,
 ];
 
 /** Named functions the hooks reference (the stack's `functions` map). */

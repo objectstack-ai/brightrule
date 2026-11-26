@@ -9,7 +9,7 @@
     Markdown统计.md    同样的排名，加上合计和阈值说明
     Markdown明细.csv   每个 .md 一行，也按大小排
 
-token 估算与应用的版本文档一致（src/data/document-text.ts）：字符数 ÷ 1.5，向上取整。
+token 估算与系统里的制度正文、制度附件一致（src/data/document-text.ts）：字符数 ÷ 1.5，向上取整。
 阈值（设计文档场景 B、C）：单份制度超过 1.2 万 token 不再整份交给模型，改为段落检索；
 全部制度合计不超过 2.4 万 token 时，通用问可以全部放入。
 """
@@ -133,7 +133,7 @@ def write_outputs(out_dir: Path, policies: List[Policy]) -> Tuple[Path, Path]:
     for i, p in enumerate(rows, start=1):
         flag = '⚠ 超过单份阈值' if p.tokens > PER_POLICY_TOKENS else ''
         lines.append(f'| {i} | {p.name} | {p.tokens:,} | {p.chars:,} | {kb(p.bytes)} | {len(p.attachments)} | {flag} |')
-    lines += ['', 'token 为估算（字符数 ÷ 1.5，与系统里版本文档的 token 估算一致），正文和全部附件都计入。'
+    lines += ['', 'token 为估算（字符数 ÷ 1.5，与系统里制度正文、制度附件的 token 估算一致），正文和全部附件都计入。'
               '每个 .md 文件的明细见 `Markdown明细.csv`。']
     md_path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
     return csv_path, md_path

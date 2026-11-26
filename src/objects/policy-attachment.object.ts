@@ -1,38 +1,30 @@
 import { ObjectSchema, Field } from '@objectstack/spec/data';
 
 /**
- * 附件 — one attachment (附件N / 附表N) of a policy version. The body is not here: it
- * is the version's own `body_md` (see policy-version.object.ts).
+ * 制度附件 — one attachment (附件N / 附表N) of a policy, the policy's only
+ * child (brightrule#45). The body is not here: it is the policy's own
+ * `body_md` (see policy.object.ts).
  *
- * Three kinds, by what the AI may do with them:
- *   - normative (规范性): part of the rule (a rate table, a scope list). Its
- *     redacted Markdown is `body_md`, read together with the version's body.
- *   - form (表单): a form people fill in. Never a basis for an answer.
- *   - original (仅原件): no usable text (a scan, an image). Never a basis.
+ * There is no attachment class: the source files do not classify their
+ * attachments, and an attachment is not always a table. Its redacted Markdown
+ * (`body_md`), when it has text, is read together with the policy's body.
  *
  * As for the body, the original lives ONLY in `original_file`.
  *
  * `title` is the attachment's own name as the source writes it (「本集团内训师
  * 申报表」), and `label` its own number (「附表1」). Neither repeats the policy
- * name: the version link already says whose it is, and a title that begins
- * with the policy name makes a search by that name hit the form, not the body.
- *
- * `policy` and `is_current` are not typed by hand: the attachment hook fills
- * `policy` from the version, and the version hook keeps `is_current` in step
- * with the version's status (src/qa/version-current.hook.ts). Neither is
- * declared `readonly`: the platform strips a readonly field from every
- * non-system write, and the hooks' own writes are not system writes. Who may
- * edit them is the permission sets' job (brightrule#10).
+ * name: the master-detail link already says whose it is, and a title that
+ * begins with the policy name makes a search by that name hit the attachment,
+ * not the body.
  */
 export const PolicyAttachment = ObjectSchema.create({
   name: 'brightrule_policy_attachment',
   sharingModel: 'controlled_by_parent',
-  label: '附件',
-  pluralLabel: '附件',
+  label: '制度附件',
+  pluralLabel: '制度附件',
   icon: 'paperclip',
   nameField: 'title',
-  description:
-    '制度版本的附件，规范性附件与正文同等效力',
+  description: '制度的附件（附件N、附表N），与正文一起读',
 
   // Quick search matches the title only: an attachment's text can be long.
   searchableFields: ['title'],
@@ -40,7 +32,7 @@ export const PolicyAttachment = ObjectSchema.create({
   fieldGroups: [
     { key: 'basic', label: '附件信息' },
     { key: 'content', label: '附件正文' },
-    // 原件单独一组、默认折叠；自动带出（所属制度、现行）和导入工具维护的字段 hidden，不进表单
+    // 原件单独一组、默认折叠；导入工具维护的字段 hidden，不进表单
     { key: 'import', label: '原件', collapse: 'collapsed' },
   ],
 
@@ -52,27 +44,11 @@ export const PolicyAttachment = ObjectSchema.create({
       group: 'basic',
       description: '原文里附件自己的名称，不带制度名',
     }),
-    policy_version: Field.masterDetail('brightrule_policy_version', {
-      label: '所属版本',
+    policy: Field.masterDetail('brightrule_policy', {
+      label: '所属制度',
       required: true,
       group: 'basic',
       deleteBehavior: 'cascade',
-    }),
-    policy: Field.lookup('brightrule_policy', { hidden: true,
-      label: '所属制度',
-      group: 'import',
-      description: '由所属版本自动带出',
-    }),
-    attachment_class: Field.select({
-      label: '附件类别',
-      required: true,
-      group: 'basic',
-      description: '规范性附件与正文同等效力，作答时一起读；表单、仅原件不作答复依据',
-      options: [
-        { label: '规范性（并入全文）', value: 'normative' },
-        { label: '表单（交给用户）', value: 'form' },
-        { label: '仅原件（无文本）', value: 'original' },
-      ],
     }),
     label: Field.text({
       label: '编号',
@@ -80,30 +56,36 @@ export const PolicyAttachment = ObjectSchema.create({
       group: 'basic',
       description: '原文里的编号，如「附件1」「附表2」',
     }),
-    sort_no: Field.number({ label: '序号', scale: 0, min: 1, group: 'basic', }),
-    is_current: Field.boolean({ hidden: true,
-      label: '现行',
-      defaultValue: false,
-      group: 'import',
-      description: 'true = 属于现行版本；随所属版本的状态自动维护',
-    }),
+    sort_no: Field.number({ label: '序号', scale: 0, min: 1, group: 'basic' }),
 
-    original_file: Field.file({ label: '原件（docx / PDF）', group: 'import' }),
     body_md: Field.markdown({
       label: '附件正文',
       group: 'content',
-      requiredWhen: "record.attachment_class == 'normative'",
-      description: '规范性附件的全文（Markdown，已脱敏）；表单、仅原件的附件为空',
+      description: '附件的全文（Markdown，已脱敏）；只有图片、没有文字的附件为空',
+    }),
+    has_images: Field.boolean({
+      label: '含图片',
+      defaultValue: false,
+      group: 'content',
+      description: '附件里有图片、图表、SmartArt、公式或嵌入对象（AI 看不到）；导入时自动统计',
+    }),
+    images_need_review: Field.boolean({
+      label: '图片待核对',
+      defaultValue: false,
+      group: 'content',
+      description: '人工勾选：图片里的内容需要补录成文字或重新扫描',
     }),
 
+    original_file: Field.file({ label: '原件（docx / PDF）', group: 'import' }),
     has_text: Field.boolean({ hidden: true, label: '有文本', defaultValue: false, group: 'import' }),
     text_chars: Field.number({ hidden: true, label: '字数', scale: 0, min: 0, group: 'import' }),
     text_tokens: Field.number({ hidden: true, label: 'Token 估算', scale: 0, min: 0, group: 'import' }),
-    content_hash: Field.text({ hidden: true,
+    content_hash: Field.text({
+      hidden: true,
       label: '内容哈希',
       maxLength: 64,
       group: 'import',
-      description: '原件文件字节的 SHA-256（十六进制），导入去重用',
+      description: '原件文件字节的 SHA-256（十六进制）；不传文件时为脱敏 Markdown 的 SHA-256，导入去重用',
     }),
   },
 });

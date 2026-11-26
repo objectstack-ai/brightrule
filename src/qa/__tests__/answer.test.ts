@@ -8,10 +8,24 @@ import { BrightRuleSeedData } from '../../data/seed.js';
 
 type Row = Record<string, unknown>;
 
-/** The seeded clauses, given ids, indexed the way the knowledge service indexes them. */
+/**
+ * A clause of a policy that is no longer published (its policy was revised or
+ * abolished): indexed like any other, never current. The seed holds only
+ * published policies, so the test adds it.
+ */
+const RETIRED_CLAUSE: Row = {
+  title: '差旅费报销管理办法 第五条 住宿标准（已废止）',
+  policy: '差旅费报销管理办法',
+  citation: '《差旅费报销管理办法（已废止）》第五条',
+  content: '一线城市住宿标准为每晚不超过 500 元，其他城市不超过 350 元。',
+  keywords: '住宿 酒店 标准',
+  is_current: false,
+};
+
+/** The seeded clauses (and one retired clause), given ids, indexed the way the knowledge service indexes them. */
 async function indexSeededClauses() {
   const seed = BrightRuleSeedData.find((s) => s.object === 'brightrule_clause');
-  const rows: Row[] = (seed?.records ?? []).map((r, i) => ({ ...(r as Row), id: `c${i}` }));
+  const rows: Row[] = [...(seed?.records ?? []), RETIRED_CLAUSE].map((r, i) => ({ ...(r as Row), id: `c${i}` }));
   const adapter = new KeywordKnowledgeAdapter();
   const source = policyClauseKnowledgeSource('keyword');
   const docs = rows.map((r) => recordToDocument(source, source.source as ObjectKnowledgeSource, r));
@@ -44,13 +58,14 @@ describe('policy inquiry retrieval', () => {
   it('ranks the current clause that answers first', async () => {
     const kb = await indexSeededClauses();
     const [best] = await kb.candidates('去上海出差，酒店住宿标准是多少？');
-    expect(best.citation).toBe('《差旅费报销管理办法》V3.0 第五条');
+    expect(best.citation).toBe('《差旅费报销管理办法》第五条');
   });
 
-  it('never hands a superseded version to the answer', async () => {
+  it('never hands a clause that is not current to the answer', async () => {
     const kb = await indexSeededClauses();
     const found = await kb.candidates('一线城市住宿标准每晚多少元');
-    expect(found.map((c) => c.citation)).not.toContain('《差旅费报销管理办法》V2.0 第五条');
+    expect(found.map((c) => c.citation)).toContain('《差旅费报销管理办法》第五条');
+    expect(found.map((c) => c.citation)).not.toContain(RETIRED_CLAUSE.citation);
   });
 
   it('ranks across policies', async () => {
@@ -69,7 +84,7 @@ describe('the no-model fallback', () => {
     expect(a.needs_human).toBe(true);
     expect(a.cited_clause).toBeNull();
     expect(a.answer.startsWith(REFERENCE_INTRO)).toBe(true);
-    expect(a.answer).toContain('《差旅费报销管理办法》V3.0 第五条');
+    expect(a.answer).toContain('《差旅费报销管理办法》第五条');
   });
 
   it('reports an unanswerable question as not found', async () => {

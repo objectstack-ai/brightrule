@@ -34,7 +34,7 @@ from lxml import etree
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from convert import CONVERTIBLE, has_docx_sibling  # noqa: E402
-from docx2md import NON_TEXT_MARKERS, attachment_docx, document_markdown, split_document  # noqa: E402
+from docx2md import NON_TEXT_MARKERS, attachment_docx, document_markdown, non_text_counts, split_document  # noqa: E402
 import pdf_ocr  # noqa: E402
 import mdstats  # noqa: E402
 
@@ -295,10 +295,6 @@ class FileResult:
     ocr: bool = False   # 扫描版 PDF：文字是识别出来的，只有 .md
     # 转 Markdown 时丢掉的非文字内容：{'正文' 或附件名: {'图片': 3, '图表': 1, …}}
     non_text: Dict[str, Dict[str, int]] = field(default_factory=dict)
-
-
-def non_text_counts(md: str) -> Dict[str, int]:
-    return {name: md.count(mark) for mark, name in NON_TEXT_MARKERS.items() if mark in md}
 
 
 def _parse(data: bytes) -> etree._Element:

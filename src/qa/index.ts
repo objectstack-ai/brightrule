@@ -3,10 +3,9 @@ import { KeywordKnowledgePlugin } from './keyword-adapter.js';
 import { policyClauseKnowledgeSource, policyQaAdapter } from './knowledge-source.js';
 import { PolicyQaPlugin } from './policy-qa-plugin.js';
 import { ANSWER_QUESTION_FUNCTION, answerQuestion, QuestionAnswerHook } from './question-answer.hook.js';
-import { PolicyRelationHook } from './policy-relation.hook.js';
 import { QuestionGuardHook } from './question-guard.hook.js';
 import { QuestionScopeHook } from './question-scope.hook.js';
-import { ClauseCurrentHook, PolicyAttachmentHook, VersionCurrentHook } from './version-current.hook.js';
+import { ClauseCurrentHook, PolicyStatusHook } from './policy-status.hook.js';
 import { KnowledgeVectorPlugin } from './vector/plugin.js';
 
 /**
@@ -29,17 +28,14 @@ export function policyQaPlugins(): unknown[] {
 /**
  * Lifecycle hooks: strip a person's forged answer, check the question's scope,
  * then answer it on save (the order is each hook's declared `priority`, not
- * this list's); keep clause and attachment currency in step with versions; keep
- * policy relations consistent with their version.
+ * this list's); keep clause currency in step with the policy's status.
  */
 export const policyQaHooks = [
   QuestionGuardHook,
   QuestionScopeHook,
   QuestionAnswerHook,
-  VersionCurrentHook,
+  PolicyStatusHook,
   ClauseCurrentHook,
-  PolicyAttachmentHook,
-  PolicyRelationHook,
 ];
 
 /** Named functions the hooks reference (the stack's `functions` map). */

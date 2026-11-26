@@ -11,10 +11,10 @@ const policyAttachmentViews: UI.View = {
     columns: [
       { field: 'label' },
       { field: 'title' },
-      { field: 'policy_version' },
-      { field: 'attachment_class' },
+      { field: 'policy' },
       { field: 'sort_no' },
-      { field: 'is_current' },
+      { field: 'has_images' },
+      { field: 'images_need_review' },
     ],
     sort: [{ field: 'sort_no', order: 'asc' }],
   },

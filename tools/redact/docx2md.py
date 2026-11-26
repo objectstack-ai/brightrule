@@ -36,6 +36,11 @@ NON_TEXT_MARKERS = {'（图片）': '图片', '（图表）': '图表', '（Smar
                     '（公式）': '公式', '（嵌入对象）': '嵌入对象'}
 
 
+def non_text_counts(md: str) -> Dict[str, int]:
+    """Markdown 里没转成文字的内容（图片、图表……）各有几处。脱敏时的「非文字内容统计」和打包时的「含图片」都按它算。"""
+    return {name: md.count(mark) for mark, name in NON_TEXT_MARKERS.items() if mark in md}
+
+
 def w(tag: str) -> str:
     return f'{{{W}}}{tag}'
 

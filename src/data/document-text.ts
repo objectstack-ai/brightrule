@@ -1,5 +1,5 @@
 /**
- * The derived numbers of a version body (版本正文) or attachment (附件) —
+ * The derived numbers of a policy body (制度正文) or attachment (制度附件) —
  * character count, token estimate, article index — computed one way, here, so
  * the seed and the import script (tools/redact → import, brightrule#11 / #13)
  * agree.
@@ -48,8 +48,8 @@ export interface BodyArticle {
 }
 
 /**
- * Assemble a body as Markdown — a `#` heading with the policy name and
- * version, then each article as `**第X条** 标题` and its text — and index each
+ * Assemble a body as Markdown — a `#` heading with the policy name, then each
+ * article as `**第X条** 标题` and its text — and index each
  * article's span in what was assembled.
  */
 export function assembleBody(heading: string, articles: BodyArticle[]): {

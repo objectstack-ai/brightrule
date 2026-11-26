@@ -1,8 +1,0 @@
-# Build context is the repository root; the image needs only these.
-*
-!package.json
-!pnpm-lock.yaml
-!pnpm-workspace.yaml
-!dist/
-!deploy/objectos-ee/.build/
-!deploy/objectos-ee/ee-host.config.ts

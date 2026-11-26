@@ -14,7 +14,7 @@ import * as permissions from './src/security';
 import * as capabilities from './src/security/capabilities';
 import * as datasets from './src/datasets';
 import { BrightRuleSeedData } from './src/data/seed';
-import { policyQaFunctions, policyQaHooks, policyQaPlugins } from './src/qa';
+import { policyHooks } from './src/qa';
 
 // Every value a barrel exports, as the list a stack key takes: typed by what
 // the barrel exports, and an empty list while it exports nothing yet.
@@ -53,17 +53,9 @@ export default defineStack({
   // `objectstack generate flow NAME` writes: without it this config stops
   // loading once it holds such a flow. It can go if this project will never
   // hold one.
-  // `realtime` carries the record events the policy-inquiry index follows
-  // (src/qa): a clause written after boot is re-indexed from its event.
-  // ObjectOS Cloud environments do not provide it and refuse to build an app
-  // that requires it; they also load no app code plugins, so the index it
-  // feeds does not run there. `pnpm run deploy` builds with
-  // BRIGHTRULE_TARGET=cloud, which leaves it out. Local dev and the EE image
-  // (deploy/objectos-ee) keep it.
   requires: [
     'automation',
     'triggers',
-    ...(process.env.BRIGHTRULE_TARGET === 'cloud' ? [] : (['realtime'] as const)),
   ],
 
   // Generic connector executors, default-present so you can add a `connectors:`
@@ -78,13 +70,12 @@ export default defineStack({
     new ConnectorRestPlugin(),
     new ConnectorOpenApiPlugin(),
     new ConnectorMcpPlugin(),
-    // 制度问询: knowledge service, retrieval engine and the clause index.
-    ...policyQaPlugins(),
   ],
 
-  // 制度问询 lifecycle hooks (src/qa) and the sample policies (src/data).
-  hooks: policyQaHooks,
-  functions: policyQaFunctions,
+  // The policy object's lifecycle hooks (src/qa) and the sample policies
+  // (src/data). Every hook is metadata-only: the app ships no code plugin
+  // (brightrule#19).
+  hooks: policyHooks,
   data: BrightRuleSeedData,
 
   // Every directory `objectstack generate` writes into is wired here: its

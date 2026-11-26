@@ -6,7 +6,5 @@ dist
 .env
 .env.*
 
-# BrightRule EE image build output (deploy/objectos-ee/build.sh)
-deploy/objectos-ee/.build/
 # Local evaluation results (scripts/eval)
 scripts/eval/results/

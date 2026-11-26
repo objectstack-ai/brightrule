@@ -1,7 +1,6 @@
 import { defineSeed, seedFile } from '@objectstack/spec/data';
 import { Policy } from '../objects/policy.object.js';
 import { PolicyAttachment } from '../objects/policy-attachment.object.js';
-import { Clause } from '../objects/clause.object.js';
 import { PolicySuggestion } from '../objects/policy-suggestion.object.js';
 import { assembleBody, textStats } from './document-text.js';
 
@@ -51,24 +50,28 @@ const businessUnits = defineSeed(BusinessUnit, {
   ],
 });
 
-type ClauseRow = [policy: string, no: string, title: string, content: string, keywords: string];
+type ArticleRow = [policy: string, no: string, title: string, content: string];
 
-/** The sample clauses; each policy's body is assembled from its own. */
-const CLAUSES: ClauseRow[] = [
-  [T, '第五条', '住宿标准', '一线城市（北京、上海、广州、深圳）住宿标准为每晚不超过 600 元，其他城市不超过 400 元，超标部分由个人承担。', '住宿 酒店 标准 出差'],
-  [T, '第八条', '伙食补贴', '出差伙食补贴每人每天 100 元，按实际出差天数计算，不再另行报销餐费。', '补贴 餐费 伙食'],
-  [T, '第十一条', '网约车报销', '出差期间市内交通可乘坐网约车，凭电子发票及行程单报销，单日不超过 150 元。', '网约车 打车 交通 报销'],
-  [L, '第十二条', '年休假天数', '员工累计工作满 1 年不满 10 年的，年休假 5 天；满 10 年不满 20 年的，年休假 10 天；满 20 年的，年休假 15 天。', '年假 年休假 休假'],
-  [L, '第十五条', '病假', '病假须提供二级以上医院诊断证明；连续病假 3 天以内由部门负责人审批，3 天以上须部门负责人及人力资源部审批。', '病假 请假 审批'],
-  [S, '第六条', '口令要求', '系统口令长度不少于 12 位，须包含大小写字母、数字及特殊字符，每 90 天更换一次。', '密码 口令'],
-  [S, '第九条', '外部 AI 工具', '禁止将内部及以上密级数据上传至未经信息技术部批准的外部网盘、翻译或 AI 工具。', 'AI 工具 数据外发 网盘 翻译'],
-  [G, '第七条', '礼品收受', '员工不得收受价值超过 200 元的礼品；无法拒绝的，须在 3 个工作日内上交合规部登记。', '礼品 礼金 收礼'],
-  [C, '第十五条', '法务审查', '合同金额 50 万元以上，或违约金超过合同金额 20% 的，须经法务部审查后方可签署。', '合同 法务 审查 签署'],
-  [FC, '第一条', '执行要求', '本单位签订的合同按集团《合同管理办法》执行；需法务审查的合同，由本单位综合办公室初审后报集团法务部。', '合同 转发 初审'],
-  [RS, '第一条', '参照范围', '本单位信息系统账号、数据分级与外部工具使用参照集团《信息安全管理规定》执行；本单位信息安全联络人由综合部指定。', '信息安全 参照执行 联络人'],
-  [BR, '第九条', '会议通知', '董事会定期会议应于会议召开 10 日前书面通知全体董事；临时会议应于会议召开 3 日前通知。', '董事会 会议 通知'],
-  [PI, '第六条', '廉政谈话', '各部门负责人每年至少与本部门员工开展一次廉政谈话，谈话记录报纪检监察室备案。', '廉政 谈话 纪检'],
-  [AR, '第六条', '借阅登记', '借阅档案须填写借阅登记表，经部门负责人同意后借阅，借阅期限不超过 15 个工作日。', '档案 借阅 登记'],
+/**
+ * The sample articles (条); each policy's body is assembled from its own. There
+ * is no clause table (brightrule#19): the articles live in the body, indexed
+ * by `article_index`.
+ */
+export const ARTICLES: ArticleRow[] = [
+  [T, '第五条', '住宿标准', '一线城市（北京、上海、广州、深圳）住宿标准为每晚不超过 600 元，其他城市不超过 400 元，超标部分由个人承担。'],
+  [T, '第八条', '伙食补贴', '出差伙食补贴每人每天 100 元，按实际出差天数计算，不再另行报销餐费。'],
+  [T, '第十一条', '网约车报销', '出差期间市内交通可乘坐网约车，凭电子发票及行程单报销，单日不超过 150 元。'],
+  [L, '第十二条', '年休假天数', '员工累计工作满 1 年不满 10 年的，年休假 5 天；满 10 年不满 20 年的，年休假 10 天；满 20 年的，年休假 15 天。'],
+  [L, '第十五条', '病假', '病假须提供二级以上医院诊断证明；连续病假 3 天以内由部门负责人审批，3 天以上须部门负责人及人力资源部审批。'],
+  [S, '第六条', '口令要求', '系统口令长度不少于 12 位，须包含大小写字母、数字及特殊字符，每 90 天更换一次。'],
+  [S, '第九条', '外部 AI 工具', '禁止将内部及以上密级数据上传至未经信息技术部批准的外部网盘、翻译或 AI 工具。'],
+  [G, '第七条', '礼品收受', '员工不得收受价值超过 200 元的礼品；无法拒绝的，须在 3 个工作日内上交合规部登记。'],
+  [C, '第十五条', '法务审查', '合同金额 50 万元以上，或违约金超过合同金额 20% 的，须经法务部审查后方可签署。'],
+  [FC, '第一条', '执行要求', '本单位签订的合同按集团《合同管理办法》执行；需法务审查的合同，由本单位综合办公室初审后报集团法务部。'],
+  [RS, '第一条', '参照范围', '本单位信息系统账号、数据分级与外部工具使用参照集团《信息安全管理规定》执行；本单位信息安全联络人由综合部指定。'],
+  [BR, '第九条', '会议通知', '董事会定期会议应于会议召开 10 日前书面通知全体董事；临时会议应于会议召开 3 日前通知。'],
+  [PI, '第六条', '廉政谈话', '各部门负责人每年至少与本部门员工开展一次廉政谈话，谈话记录报纪检监察室备案。'],
+  [AR, '第六条', '借阅登记', '借阅档案须填写借阅登记表，经部门负责人同意后借阅，借阅期限不超过 15 个工作日。'],
 ];
 
 /** 试行: the title says 「试行」 or 「暂行」 — what src/qa/policy-trial.hook.ts derives on save. */
@@ -108,7 +111,7 @@ const POLICY_ROWS = [
 const withBody = (p: (typeof POLICY_ROWS)[number]) => {
   const { markdown, articleIndex } = assembleBody(
     p.title,
-    CLAUSES.filter(([policy]) => policy === p.title).map(([, no, title, text]) => ({ no, title, text })),
+    ARTICLES.filter(([policy]) => policy === p.title).map(([, no, title, text]) => ({ no, title, text })),
   );
   const { text_chars, text_tokens } = textStats(markdown);
   return { ...p, is_trial: isTrial(p.title), category_group: categoryGroup(p.category), body_md: markdown, article_index: articleIndex, text_chars, text_tokens, has_images: false };
@@ -118,22 +121,6 @@ const policies = defineSeed(Policy, {
   env: ['dev', 'test'],
   externalId: 'title',
   records: POLICY_ROWS.map(withBody),
-});
-
-// Clauses of a published policy are current; the clause hook derives the
-// flag from the policy on insert (src/qa/policy-status.hook.ts), and the seed
-// says the same.
-const clauses = defineSeed(Clause, {
-  env: ['dev', 'test'],
-  externalId: 'title',
-  records: CLAUSES.map(([policy, no, title, content, keywords]) => ({
-    title: `${policy} ${no} ${title}`,
-    policy,
-    citation: `《${policy}》${no}`,
-    content,
-    keywords,
-    is_current: true,
-  })),
 });
 
 // ── 原件与附件 ──────────────────────────────────────────────────────────────
@@ -186,7 +173,7 @@ const originalOf = (file: string, name: string) =>
 // The body originals, as a dataset of their own that only fills two columns of
 // the policies above. A seed file exists only in a built package: a load from
 // source (vitest's stack) refuses the dataset that names one, and a policy row
-// that carried its file would take every clause down with it.
+// that carried its file would take every attachment down with it.
 const policyOriginals = defineSeed(Policy, {
   env: ['dev', 'test'],
   externalId: 'title',
@@ -244,7 +231,7 @@ const attachments = defineSeed(PolicyAttachment, {
 // ── AI 建议 ────────────────────────────────────────────────────────────────
 // Two suggestions on the travel policy, as a diagnosis run would file them
 // (brightrule#48). Written by hand — the 「AI 诊断」 action does not diagnose
-// yet — and marked so in `run_info`. The quotes are the seeded clause text.
+// yet — and marked so in `run_info`. The quotes are the seeded article text.
 const DIAGNOSIS_BATCH = 'seed-20261126';
 const suggestions = defineSeed(PolicySuggestion, {
   env: ['dev', 'test'],
@@ -255,7 +242,7 @@ const suggestions = defineSeed(PolicySuggestion, {
       category: 'ambiguity',
       severity: 'medium',
       article: '第十一条',
-      quote: CLAUSES.find(([p, no]) => p === T && no === '第十一条')![3],
+      quote: ARTICLES.find(([p, no]) => p === T && no === '第十一条')![3],
       finding: '「单日不超过 150 元」没有说明是否包含往返机场、火车站的网约车费用，报销时容易各自理解。',
       suggestion: '写明上限是否包含往返机场、火车站的费用；不包含的，单列标准或写明按实报销。',
       status: 'open',
@@ -268,7 +255,7 @@ const suggestions = defineSeed(PolicySuggestion, {
       category: 'cross_policy_conflict',
       severity: 'low',
       article: '第八条',
-      quote: CLAUSES.find(([p, no]) => p === T && no === '第八条')![3],
+      quote: ARTICLES.find(([p, no]) => p === T && no === '第八条')![3],
       finding: '「按实际出差天数计算」没有说明出发、返回当天是否计入；出差天数的口径应与《考勤与休假管理制度》的考勤记录一致。',
       suggestion: '写明出发、返回当天的计算方法，并注明以考勤记录的出差天数为准。',
       related_policy: L,
@@ -280,4 +267,4 @@ const suggestions = defineSeed(PolicySuggestion, {
   ],
 });
 
-export const BrightRuleSeedData = [businessUnits, policies, policyOriginals, attachments, clauses, suggestions];
+export const BrightRuleSeedData = [businessUnits, policies, policyOriginals, attachments, suggestions];

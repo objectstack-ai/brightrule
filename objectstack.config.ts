@@ -11,6 +11,7 @@ import * as apps from './src/apps';
 import * as skills from './src/skills';
 import * as picklists from './src/picklists';
 import * as permissions from './src/security';
+import * as capabilities from './src/security/capabilities';
 import * as datasets from './src/datasets';
 import { BrightRuleSeedData } from './src/data/seed';
 import { policyQaFunctions, policyQaHooks, policyQaPlugins } from './src/qa';
@@ -101,5 +102,8 @@ export default defineStack({
   skills: exportsOf(skills),
   picklists: exportsOf(picklists),
   permissions: exportsOf(permissions),
+  // The authorization capabilities this app defines (ADR-0066 D1); the
+  // permission sets above grant them, actions require them.
+  capabilities: [capabilities.PolicyDiagnoseCapability],
   datasets: exportsOf(datasets),
 });

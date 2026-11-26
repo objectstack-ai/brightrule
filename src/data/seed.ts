@@ -2,6 +2,7 @@ import { defineSeed, seedFile } from '@objectstack/spec/data';
 import { Policy } from '../objects/policy.object.js';
 import { PolicyAttachment } from '../objects/policy-attachment.object.js';
 import { Clause } from '../objects/clause.object.js';
+import { PolicySuggestion } from '../objects/policy-suggestion.object.js';
 import { assembleBody, textStats } from './document-text.js';
 
 // Sample policies — fictional demo data, loaded in dev and test only (never in
@@ -165,4 +166,43 @@ const attachments = defineSeed(PolicyAttachment, {
   ],
 });
 
-export const BrightRuleSeedData = [policies, policyOriginals, attachments, clauses];
+// ── AI 建议 ────────────────────────────────────────────────────────────────
+// Two suggestions on the travel policy, as a diagnosis run would file them
+// (brightrule#48). Written by hand — the 「AI 诊断」 action does not diagnose
+// yet — and marked so in `run_info`. The quotes are the seeded clause text.
+const DIAGNOSIS_BATCH = 'seed-20261126';
+const suggestions = defineSeed(PolicySuggestion, {
+  env: ['dev', 'test'],
+  externalId: ['policy', 'article'],
+  records: [
+    {
+      policy: T,
+      category: 'ambiguity',
+      severity: 'medium',
+      article: '第十一条',
+      quote: CLAUSES.find(([p, no]) => p === T && no === '第十一条')![3],
+      finding: '「单日不超过 150 元」没有说明是否包含往返机场、火车站的网约车费用，报销时容易各自理解。',
+      suggestion: '写明上限是否包含往返机场、火车站的费用；不包含的，单列标准或写明按实报销。',
+      status: 'open',
+      batch_id: DIAGNOSIS_BATCH,
+      diagnosed_at: '2026-11-26T09:00:00.000Z',
+      run_info: { source: 'seed', note: '合成示例，非 AI 生成' },
+    },
+    {
+      policy: T,
+      category: 'cross_policy_conflict',
+      severity: 'low',
+      article: '第八条',
+      quote: CLAUSES.find(([p, no]) => p === T && no === '第八条')![3],
+      finding: '「按实际出差天数计算」没有说明出发、返回当天是否计入；出差天数的口径应与《考勤与休假管理制度》的考勤记录一致。',
+      suggestion: '写明出发、返回当天的计算方法，并注明以考勤记录的出差天数为准。',
+      related_policy: L,
+      status: 'discussing',
+      batch_id: DIAGNOSIS_BATCH,
+      diagnosed_at: '2026-11-26T09:00:00.000Z',
+      run_info: { source: 'seed', note: '合成示例，非 AI 生成' },
+    },
+  ],
+});
+
+export const BrightRuleSeedData = [policies, policyOriginals, attachments, clauses, suggestions];

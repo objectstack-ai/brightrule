@@ -1,5 +1,7 @@
 import * as UI from '@objectstack/spec/ui';
 import { Policy } from '../objects/policy.object.js';
+import { PolicySuggestion } from '../objects/policy-suggestion.object.js';
+import { POLICY_DIAGNOSE_CAPABILITY } from '../security/capabilities.js';
 
 /**
  * Main App
@@ -19,8 +21,9 @@ import { Policy } from '../objects/policy.object.js';
 // own (brightrule#45: 「我的问询」「待人工答复」 were removed, as were the version
 // and relation queues with their objects). The clause table is being retired
 // (D6, #19) and the Notes sample is to be deleted (#10), so neither has an
-// entry. The first item is where the app opens. Hiding 「制度维护」 from
-// employees waits for the permission sets (#10).
+// entry. The first item is where the app opens. 「AI 建议」 is served only to
+// policy administrators (brightrule#48); hiding the rest of 「制度维护」 from
+// employees waits for the visibility rules (#10).
 const mainApp: UI.App = {
   name: 'brightrule_main_app',
   label: '明规',
@@ -33,6 +36,18 @@ const mainApp: UI.App = {
       icon: 'book-open',
       children: [
         { id: 'brightrule_policy_nav', type: 'object', objectName: Policy.name, label: '全部制度', icon: 'book-open' },
+        // Only policy administrators read 「AI 建议」. The server does not drop
+        // an object entry the caller cannot read, so the entry asks for the
+        // capability only 制度管理员 holds; the data stays guarded by the
+        // object grant either way.
+        {
+          id: 'brightrule_policy_suggestion_nav',
+          type: 'object',
+          objectName: PolicySuggestion.name,
+          label: 'AI 建议',
+          icon: 'sparkles',
+          requiredPermissions: [POLICY_DIAGNOSE_CAPABILITY],
+        },
       ],
     },
   ],

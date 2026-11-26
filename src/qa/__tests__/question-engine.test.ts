@@ -18,8 +18,8 @@ describe('inquiry hooks on the engine', () => {
   beforeAll(async () => {
     stack = await bootStack(config);
     // A person asking. The dev admin is a person like any other to the guard
-    // (only system and in-product AI writes pass); a plain member cannot
-    // create a question at all until the permission sets of brightrule#10.
+    // (only system and in-product AI writes pass); a plain member holds the
+    // default 问询人 set (brightrule#48) and sees only their own questions.
     asker = await stack.signIn();
     member = await stack.signUp('member@example.com');
     const policies = (await stack.rows('brightrule_policy', {})) as Row[];

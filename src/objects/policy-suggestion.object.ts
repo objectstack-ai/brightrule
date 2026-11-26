@@ -50,6 +50,8 @@ export const PolicySuggestion = ObjectSchema.create({
       group: 'finding',
       deleteBehavior: 'set_null',
       description: '「制度空白」类意见可不填',
+      // The reverse list on the policy's page.
+      relatedListTitle: '制度意见',
     }),
     article: Field.text({
       label: '涉及条款',
@@ -69,6 +71,9 @@ export const PolicySuggestion = ObjectSchema.create({
       group: 'finding',
       deleteBehavior: 'set_null',
       description: '与其他制度冲突、引用已废止制度时，指向对方制度',
+      // Hidden on the other policy's page (brightrule#58 review): 所属制度's
+      // list is the one readers look for.
+      relatedList: false,
     }),
     source: Field.select({
       label: '来源',

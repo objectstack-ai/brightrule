@@ -33,12 +33,12 @@ export const PolicyAdminPermissionSet = definePermissionSet({
     // units are maintained by the platform's administrators.
     sys_business_unit: { allowRead: true },
   },
-  fields: {
-    ...Object.fromEntries(
-      SUGGESTION_TRIAGE_FIELDS.map((f) => [`brightrule_policy_suggestion.${f}`, { readable: true, editable: true }]),
-    ),
-    // 大类 is the intake hook's alone: it always derives it from 类别.
-    'brightrule_policy_suggestion.category_group': { readable: true, editable: false },
-  },
+  // Modify All already reaches every field; the triage fields are listed so
+  // the grant reads plainly beside the inquirer set's read-only mask. 大类 is
+  // not masked here (a mask beside Modify All binds nobody): the intake hook
+  // overwrites whatever is sent.
+  fields: Object.fromEntries(
+    SUGGESTION_TRIAGE_FIELDS.map((f) => [`brightrule_policy_suggestion.${f}`, { readable: true, editable: true }]),
+  ),
   systemPermissions: [POLICY_DIAGNOSE_CAPABILITY],
 });

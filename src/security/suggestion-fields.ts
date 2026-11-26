@@ -1,8 +1,8 @@
 /**
  * The triage and handling fields of 制度意见 (brightrule#57): an employee
  * reads them but only 制度管理员 writes them (field permissions on the two
- * sets). 大类 is read-only to both sets and not listed here: the intake hook
- * always derives it from 类别.
+ * sets). 大类 is not listed: the intake hook always derives it from 类别, and
+ * the inquirer set masks it read-only so the form shows it so.
  *
  * Kept out of the permission-set barrel (`./index.ts`): every export of that
  * file is read as a permission set.

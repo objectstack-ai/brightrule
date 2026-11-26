@@ -22,6 +22,11 @@ import { ObjectSchema, Field } from '@objectstack/spec/data';
  * 参照执行), `addressees` (主送, verbatim) and `is_trial`, which a hook derives
  * from the title (src/qa/policy-trial.hook.ts).
  *
+ * 制度分类 / 制度大类 / 制度层级 follow the group's policy system, 「三类三层级」
+ * (brightrule#54, docs/policy-category-level.md): `category` is one of the 12
+ * 小类, `category_group` the major class a hook derives from it
+ * (src/qa/policy-category-group.hook.ts), `policy_level` one of three levels.
+ *
  * `parent_policy` (上级制度, brightrule#48) names the group policy this one
  * forwards or follows, or the policy above it in the hierarchy; a policy that
  * names itself is refused (src/qa/policy-parent.hook.ts). The findings of AI
@@ -77,12 +82,13 @@ export const Policy = ObjectSchema.create({
     category: Field.select({
       label: '制度分类',
       group: 'basic',
-      // The values of the first five predate this list and stay as they were
-      // (seed data and stored records use them); only their labels moved to the
-      // policy system's own wording.
+      // The twelve 小类 of the group's policy system (规章制度体系管理规范, 第四条),
+      // labelled as it words them. The values of the first five predate this
+      // list and stay as they were (seed data and stored records use them); only
+      // their labels moved to the policy system's own wording (brightrule#54).
       options: [
         { label: '公司治理类', value: 'governance' },
-        { label: '战略投资类', value: 'strategy' },
+        { label: '战略投资管理类', value: 'strategy' },
         { label: '经营管理类', value: 'operations' },
         { label: '人力资源管理类', value: 'hr' },
         { label: '财务管理类', value: 'finance' },
@@ -95,7 +101,33 @@ export const Policy = ObjectSchema.create({
         { label: '综合行政类', value: 'admin' },
       ],
     }),
-    policy_level: Field.text({ label: '制度层级', maxLength: 50, group: 'basic', description: '制度信息表里的写法，如「三级管理制度」' }),
+    // 三类 — the policy system's 3 major classes above the 12 小类 (brightrule#54).
+    // Derived from `category` on insert and when the category changes
+    // (src/qa/policy-category-group.hook.ts); not `readonly`, so a maintainer
+    // can correct it, as with `is_trial`.
+    category_group: Field.select({
+      label: '制度大类',
+      group: 'basic',
+      description: '治理类、经营管理类、党工纪类三类之一；新建、改制度分类时自动带出（公司治理类→治理类，党工纪类→党工纪类，其余→经营管理类），可手改',
+      options: [
+        { label: '治理类', value: 'governance' },
+        { label: '经营管理类', value: 'operations' },
+        { label: '党工纪类', value: 'party' },
+      ],
+    }),
+    // 三层级 — and the order of precedence: a level-1 policy prevails over a
+    // level-2 one, a level-2 over a level-3 (第四条). The info table's own
+    // wording (「三级经营制度」…) stays in the body's 制度信息 table.
+    policy_level: Field.select({
+      label: '制度层级',
+      group: 'basic',
+      description: '一级效力高于二级，二级高于三级；制度信息表里的原写法（如「三级管理制度」）留在正文的制度信息表里',
+      options: [
+        { label: '一级（公司基本管理制度）', value: 'level_1' },
+        { label: '二级（部门基本制度）', value: 'level_2' },
+        { label: '三级（配套管理细则）', value: 'level_3' },
+      ],
+    }),
     // A lookup to the platform's business unit (sys_business_unit), so the
     // per-company sharing rules (docs/visibility.md, dimension 2) can name the
     // unit and the units under it. `restrict`: a unit that still owns policies

@@ -5,85 +5,99 @@
       "source": "@objectstack/skills",
       "sourceType": "node_modules",
       "skillPath": "dist/skills/objectstack-ai/SKILL.md",
-      "version": "18.6.0",
-      "computedHash": "5188e813960b1a0c2647c0d53590c8a28061182a79dff5fc46aca3f6e8d07264"
+      "version": "19.0.0-next.0",
+      "computedHash": "8101e08692552372f44b6787ccdef80af6053f3c4b0ac1a6b06df4cdfa7ce1ab"
     },
     "objectstack-api": {
       "source": "@objectstack/skills",
       "sourceType": "node_modules",
       "skillPath": "dist/skills/objectstack-api/SKILL.md",
-      "version": "18.6.0",
-      "computedHash": "01eab789e444c71155d4bc50de7bcd761e59ebb1cd24d3cd0ee7565f06931a8f"
+      "version": "19.0.0-next.0",
+      "computedHash": "3a4c605fa9176a02f6cd9ce7fd612e2a00c9cf9a9b8769746ae7cf1fd60809b1"
     },
     "objectstack-ask": {
       "source": "@objectstack/skills",
       "sourceType": "node_modules",
       "skillPath": "dist/skills/objectstack-ask/SKILL.md",
-      "version": "18.6.0",
-      "computedHash": "5d7f44b4b8231bd7165e55d492c704ce5303fa5079e017aef2aed4ef1f949be6"
+      "version": "19.0.0-next.0",
+      "computedHash": "96deb76eb30193829095562d850090c7bf594ca67e8ac62954f32fdab264eb92"
     },
     "objectstack-automation": {
       "source": "@objectstack/skills",
       "sourceType": "node_modules",
       "skillPath": "dist/skills/objectstack-automation/SKILL.md",
-      "version": "18.6.0",
-      "computedHash": "840baf69841791e2c984ba838cdb9790bf921088affbd9c66aac5d0862d4058c"
+      "version": "19.0.0-next.0",
+      "computedHash": "1749d527482480a035de361bb2a37c15a071730da4d007666dfb5c4bd36b7006"
     },
     "objectstack-data": {
       "source": "@objectstack/skills",
       "sourceType": "node_modules",
       "skillPath": "dist/skills/objectstack-data/SKILL.md",
-      "version": "18.6.0",
-      "computedHash": "45f275811f642a7b637a4af85ef54b55c01371940f60c6744d6881c8a329aa6f"
+      "version": "19.0.0-next.0",
+      "computedHash": "320945872b1d7c7c20b5bb4747d97fd500fc85660478e4480c7412b238ed7d19"
     },
     "objectstack-formula": {
       "source": "@objectstack/skills",
       "sourceType": "node_modules",
       "skillPath": "dist/skills/objectstack-formula/SKILL.md",
-      "version": "18.6.0",
-      "computedHash": "1d5d0f60db38d6192ffe24467a969d874fa73c89dfb121bf62e51f7e34f44dab"
+      "version": "19.0.0-next.0",
+      "computedHash": "112142d728baf5998b840be99c4165ae7f2d391de3e9b4ae3e43f58109ed3154"
     },
     "objectstack-i18n": {
       "source": "@objectstack/skills",
       "sourceType": "node_modules",
       "skillPath": "dist/skills/objectstack-i18n/SKILL.md",
-      "version": "18.6.0",
-      "computedHash": "ec9d0460f9347ee579e3be56215bbe18f8b4f70a42873ac0e29c19e8ae5bfe49"
+      "version": "19.0.0-next.0",
+      "computedHash": "3b1de8822118d73250a32fb160d53178b3d0236d7c59c4316fce17c0fd1a8e26"
+    },
+    "objectstack-mcp-build": {
+      "source": "@objectstack/skills",
+      "sourceType": "node_modules",
+      "skillPath": "dist/skills/objectstack-mcp-build/SKILL.md",
+      "version": "19.0.0-next.0",
+      "computedHash": "aabfd5e37c73de7e1ed7ed7a9eac23fa1b9d8f99de75ef9de7625e461eb6253f"
     },
     "objectstack-platform": {
       "source": "@objectstack/skills",
       "sourceType": "node_modules",
       "skillPath": "dist/skills/objectstack-platform/SKILL.md",
-      "version": "18.6.0",
-      "computedHash": "ff103789aaabfc4f9f7c71cf991fc3f405de02be69292a2af5d11d30ab4adf0e"
+      "version": "19.0.0-next.0",
+      "computedHash": "4621bac4c381b97632b1fed290cb3c594728732ff5aef77d6cc4c2f758e0190d"
+    },
+    "objectstack-project": {
+      "source": "@objectstack/skills",
+      "sourceType": "node_modules",
+      "skillPath": "dist/skills/objectstack-project/SKILL.md",
+      "version": "19.0.0-next.0",
+      "computedHash": "3005e453f8c1d7acd0137f22df6b3c319f3c8fcfc615bf76efdd20d0208d681d"
     },
     "objectstack-query": {
       "source": "@objectstack/skills",
       "sourceType": "node_modules",
       "skillPath": "dist/skills/objectstack-query/SKILL.md",
-      "version": "18.6.0",
-      "computedHash": "ae831c9114c8ec2ed22413b2f80ab91f7fc9dcd811cadab027b86658fa64f479"
+      "version": "19.0.0-next.0",
+      "computedHash": "46ea7bdbd279d32c8c479dc0506cb2f3548cbbdf5fa011648bff67a1a5fbd264"
     },
     "objectstack-ui": {
       "source": "@objectstack/skills",
       "sourceType": "node_modules",
       "skillPath": "dist/skills/objectstack-ui/SKILL.md",
-      "version": "18.6.0",
-      "computedHash": "12c4888c7a113282cf9acb73394f12953690d154b5b7f6ced0cb2265ca213a7e"
+      "version": "19.0.0-next.0",
+      "computedHash": "2fd21c01097a1d0f08763f84274814ee01db2b17611cb4953db93f4fdcc3b555"
     },
     "objectstack-upgrade": {
       "source": "@objectstack/skills",
       "sourceType": "node_modules",
       "skillPath": "dist/skills/objectstack-upgrade/SKILL.md",
-      "version": "18.6.0",
-      "computedHash": "83e9597d9089033907444f39908d92d05cd1c8078c4245bd767f47059c09605e"
+      "version": "19.0.0-next.0",
+      "computedHash": "70b553dbf947cfdc595e50fe53c9735aae63abb543c5338d5c1628364f4b328b"
     },
     "objectui": {
       "source": "@objectstack/skills",
       "sourceType": "node_modules",
       "skillPath": "dist/skills/objectui/SKILL.md",
-      "version": "18.6.0",
-      "computedHash": "20224aaa6505620b5ebb888a8cfaa50240010ff9afb2bb7422744bbe190460de"
+      "version": "19.0.0-next.0",
+      "computedHash": "c03bfc506ab8a2afb545a8deb04cb092185d9216935bd726516a9423559cd4f3"
     }
   }
 }

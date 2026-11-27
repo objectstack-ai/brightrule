@@ -27,8 +27,8 @@ export const EscalateOverdueCasesFlow = defineFlow({
       type: 'start',
       label: 'Daily at 09:00 Shanghai time',
       // The cadence lives HERE — FlowSchema has NO top-level `schedule` key (a
-      // named parse error). A bare cron string also works; a cron`…` tag does not.
-      // A bare expression runs in UTC. A wall-clock hour the request names is
+      // named parse error). A cron`…` tag fails. A cron with no `timezone`
+      // (a bare string) runs in UTC and warns. A wall-clock hour the request names is
       // written AS SAID with its IANA `timezone` — never converted to UTC by hand:
       // the arithmetic may be right, but nothing then records which zone was meant.
       config: { schedule: { type: 'cron', expression: '0 9 * * *', timezone: 'Asia/Shanghai' } },
@@ -80,8 +80,7 @@ record *happens to change*, so unattended it almost never fires. Use a
 carries a **`timeRelative`** descriptor is swept on a schedule (daily by default)
 and launched **once per record** whose date field falls in the window. The record
 is on the context, so the start `condition` and a `record.*` CEL value envelope work
-exactly as for a record-change flow — and because the window is evaluated every
-day, a threshold is never missed.
+exactly as for a record-change flow.
 
 <!-- os:check -->
 ```typescript
@@ -113,23 +112,31 @@ defineFlow({
 });
 ```
 
+As JSON the flow is that literal without `defineFlow(...)`; its start node:
+
+```json
+{ "id": "start", "type": "start", "label": "Daily Sweep", "config": { "timeRelative": {
+    "object": "contracts", "dateField": "end_date", "offsetDays": [60, 30, 7],
+    "filter": { "status": "active" } } } }
+```
+
 **Date EQUALITY never matches**, so a hand-rolled sweep filters windows, not
 days: a `date` field carries a time component, so `field == daysFromNow(N)` (or
 `{ $in: [...] }`) compares two differently-timed timestamps and silently returns
 nothing (build warns `flow-date-equality-filter`). Tier each threshold as a
-one-day **window** (`$gte`/`$lt`):
+one-day **window** (`$gte`/`$lt`) — this `filter`, plus the same window at
+30 / 31 and at 60 / 61 as further `$or` entries:
 
-```ts
-filter: { status: 'active', $or: [
-  { end_date: { $gte: { dialect: 'cel', source: 'isoDate(daysFromNow(7))' },
-                $lt:  { dialect: 'cel', source: 'isoDate(daysFromNow(8))' } } },
-  // …and the same one-day window at 30 / 31 and at 60 / 61
+```json
+{ "status": "active", "$or": [
+  { "end_date": { "$gte": { "dialect": "cel", "source": "isoDate(daysFromNow(7))" },
+                  "$lt":  { "dialect": "cel", "source": "isoDate(daysFromNow(8))" } } }
 ] }
 ```
 
 Abutting windows tile the timeline, so each record matches exactly one tier —
-fires once, idempotent, no guard field. Each bound is a CEL value envelope
-(`isoDate(daysFromNow(N))`), evaluated before the query; any `{…}` token but a
+fires once, idempotent, no guard field. Each bound is evaluated before the
+query; any `{…}` token but a
 query placeholder such as `{today}` is refused there (`expression-invalid`).
 For "days remaining" in a message, use `daysBetween(today(), record.end_date)`.
 

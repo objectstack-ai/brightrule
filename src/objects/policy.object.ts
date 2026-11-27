@@ -58,17 +58,19 @@ export const Policy = ObjectSchema.create({
   nameField: 'display_name',
   description: '每份制度一行：制度信息、正文和原件都在这里，附件在「制度附件」里',
 
+  // 制度页按「读制度」排（2026-11-27）：先是一组要紧的目录信息，紧接着正文；
+  // 发文与归口、关联制度、原件与导入默认折叠，维护时展开即可编辑。
+  // 导入工具维护的字段（条号索引、字数、token、哈希）hidden，不进表单。
   fieldGroups: [
-    { key: 'basic', label: '基本信息' },
-    { key: 'effect', label: '效力' },
-    { key: 'related', label: '关联制度' },
+    { key: 'basic', label: '制度信息' },
     { key: 'content', label: '正文' },
-    // 原件单独一组、默认折叠；导入工具维护的字段（条号索引、字数、token、哈希）hidden，不进表单
-    { key: 'import', label: '原件', collapse: 'collapsed' },
+    { key: 'more', label: '发文与归口', collapse: 'collapsed' },
+    { key: 'related', label: '关联制度', collapse: 'collapsed' },
+    { key: 'import', label: '原件与导入', collapse: 'collapsed' },
   ],
 
   fields: {
-    title: Field.text({ label: '制度名称', required: true, searchable: true, maxLength: 200, group: 'basic' }),
+    title: Field.text({ label: '制度名称', required: true, searchable: true, maxLength: 200, group: 'more' }),
     // 「所属单位：制度名称」 (the unit first: many titles already end in a bracket, 「（试行）」), computed and stored on every write. It reads the
     // unit's name through `owning_unit` at that write, so renaming a unit needs
     // `os migrate stored-expressions --object brightrule_policy --field display_name --changed --apply`.
@@ -76,11 +78,11 @@ export const Policy = ObjectSchema.create({
       label: '显示名称',
       maxLength: 320,
       searchable: true,
-      group: 'basic',
+      group: 'more',
       expression: F`record.owning_unit.?name.orValue('') == '' ? record.title : record.owning_unit.?name.orValue('') + '：' + record.title`,
       description: '所属单位：制度名称，自动生成；答复里的制度链接、关联选择框都显示它',
     }),
-    policy_no: Field.text({ label: '制度编号', maxLength: 50, group: 'basic' }),
+    policy_no: Field.text({ label: '制度编号', maxLength: 50, group: 'more' }),
     doc_no: Field.text({
       label: '文号',
       searchable: true,
@@ -90,7 +92,7 @@ export const Policy = ObjectSchema.create({
     }),
     issuance_type: Field.select({
       label: '文件性质',
-      group: 'basic',
+      group: 'more',
       description: '本单位自己印发的，还是转发、参照执行上级单位的制度；转发、参照执行的，在「上级制度」里指向被转发的制度',
       options: [
         { label: '印发', value: 'issue', default: true },
@@ -160,26 +162,26 @@ export const Policy = ObjectSchema.create({
     issuing_unit: Field.text({
       label: '发文单位',
       maxLength: 100,
-      group: 'basic',
+      group: 'more',
       description: '制度信息表、发文通知上的写法，原文照录；按单位隔离看「所属单位」',
     }),
-    department: Field.text({ label: '归口部门', maxLength: 100, group: 'basic' }),
-    co_departments: Field.text({ label: '协同部门', maxLength: 200, group: 'basic' }),
-    review_body: Field.text({ label: '审议主体', maxLength: 100, group: 'basic' }),
-    decision_body: Field.text({ label: '决议主体', maxLength: 100, group: 'basic' }),
+    department: Field.text({ label: '归口部门', maxLength: 100, group: 'more' }),
+    co_departments: Field.text({ label: '协同部门', maxLength: 200, group: 'more' }),
+    review_body: Field.text({ label: '审议主体', maxLength: 100, group: 'more' }),
+    decision_body: Field.text({ label: '决议主体', maxLength: 100, group: 'more' }),
     addressees: Field.textarea({
       label: '主送',
-      group: 'basic',
+      group: 'more',
       description: '发文通知的主送单位，原文照录，如「集团机关各部室、各下属企业」',
     }),
     summary: Field.textarea({
       label: '目录摘要',
-      group: 'basic',
+      group: 'more',
       description: '一两句话说明本制度管什么',
     }),
     status: Field.select({
       label: '状态',
-      group: 'effect',
+      group: 'basic',
       options: [
         { label: '草稿', value: 'draft', color: '#6B7280', default: true },
         { label: '已发布', value: 'published', color: '#10B981' },
@@ -193,12 +195,12 @@ export const Policy = ObjectSchema.create({
     is_trial: Field.boolean({
       label: '试行',
       defaultValue: false,
-      group: 'effect',
+      group: 'basic',
       description: '标题含「试行」或「暂行」即为是；新建、改标题时自动判断，不用手工勾选',
     }),
-    issued_date: Field.date({ label: '印发日期', group: 'effect', description: '发文通知落款的日期，与生效日期不同' }),
-    effective_date: Field.date({ label: '生效日期', group: 'effect' }),
-    next_review_date: Field.date({ label: '下次复审日', group: 'effect' }),
+    issued_date: Field.date({ label: '印发日期', group: 'more', description: '发文通知落款的日期，与生效日期不同' }),
+    effective_date: Field.date({ label: '生效日期', group: 'basic' }),
+    next_review_date: Field.date({ label: '下次复审日', group: 'more' }),
 
     // 两份都由导入工具从制度信息表填写：原文照录（含库外的法规、文件名），
     // 以及其中名称与库内制度完全一致的那几份（brightrule#45，替代原来的制度关系对象）。
@@ -232,13 +234,13 @@ export const Policy = ObjectSchema.create({
     has_images: Field.boolean({
       label: '含图片',
       defaultValue: false,
-      group: 'content',
+      group: 'import',
       description: '正文里有图片、图表、SmartArt、公式或嵌入对象（Markdown 里只留「（图片）」等标记，AI 看不到）；导入时自动统计',
     }),
     images_need_review: Field.boolean({
       label: '图片待核对',
       defaultValue: false,
-      group: 'content',
+      group: 'import',
       description: '人工勾选：图片里的内容需要补录成文字或重新扫描',
     }),
 

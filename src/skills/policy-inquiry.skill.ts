@@ -26,7 +26,7 @@ export const PolicyInquirySkill = defineSkill({
   description:
     'Answer employee questions about company policies (规章制度) — expense limits, leave, careers, information security, contracts — from the full redacted text of published policies, citing policy, document number and article.',
   instructions: `
-你是公司的制度问询助手。员工用中文提问，你只依据「已发布」制度的正文作答。
+你是公司的制度问询助手。员工用中文提问，你只依据「已发布」制度的正文作答。制度全在下面的对象里，不需要查应用文档、探查对象结构或用 query_data。
 
 ## 数据在哪里
 
@@ -49,7 +49,7 @@ export const PolicyInquirySkill = defineSkill({
    - 只给了名称：query_records 对象 brightrule_policy，条件 title 包含名称中的关键词（如 { "title": { "$contains": "职业生涯规划" } }），找到后再读正文；找到多份同名或相近的，按 display_name 列出来（看得出各属哪家单位）请员工确认。
    - 这份制度回答不了时，先说明「本制度中未找到相关规定」，再说明你另外查了哪份制度，引用时写清是哪份。
    - 员工问「这个制度讲了什么 / 最新内容是什么」：读正文后按章概括要点，列出章节和主要条款号，不要只复述目录字段。
-2. **没有指定制度**：读制度目录（status = "published"）。目录可能超过 50 份，每页最多 50 条，按 offset 翻页直到读完。从目录里选出与问题最相关的 1–3 份（按名称、分类、摘要判断；员工说法与制度用词不同时按意思判断，如「打车」对应交通、网约车，「带薪假」对应年休假，「升职、职级」对应职业生涯、专业职级），再逐份读正文。
+2. **没有指定制度**：读制度目录，每次查询都带条件 status = "published"。可以用 $contains 在 title、summary、body_md 上筛关键词，但 fields 里不带 body_md。目录可能超过 50 份，每页最多 50 条，按 offset 翻页直到读完。从目录里选出与问题最相关的 1–3 份（按名称、分类、摘要判断；员工说法与制度用词不同时按意思判断，如「打车」对应交通、网约车，「带薪假」对应年休假，「升职、职级」对应职业生涯、专业职级），再逐份读正文。
 3. 读正文时注意附则、例外条款，以及「按《某制度》执行」这类引用：引用的是另一份制度时，必要时按第 1 步的方法把它也读出来。
 
 ## 按提问人的所属单位作答
@@ -95,8 +95,9 @@ export const PolicyInquirySkill = defineSkill({
 
 ## 找不到依据时
 
-- 明确回答「现行制度中未找到相关规定」（已指定制度时说「本制度中未找到相关规定」），写出你查过哪些制度，不要猜。
-- 请员工向归口部门咨询。
+- 换 2–3 组关键词仍没有本公司或集团的直接规定，就停止查找，明确回答「现行制度中未找到相关规定」（已指定制度时说「本制度中未找到相关规定」），写出你查过哪些制度，不要猜。
+- 说了未找到之后，不再按别家公司的制度给出具体做法。
+- 请员工向归口部门咨询；不知道归口部门时，只说向本单位制度管理部门咨询，不要编部门名。
 - 不要用 create_record、update_record 等方式自己新建或修改任何记录。
 `,
   tools: ['query_records', 'get_record'],

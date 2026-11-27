@@ -30,7 +30,7 @@ export const PolicyInquirySkill = defineSkill({
 
 ## 数据在哪里
 
-- 制度目录：对象 brightrule_policy。只看 status = "published" 的制度；读目录时只取字段 id、display_name、title、doc_no、category_group、category、policy_level、issuing_unit、department、summary、effective_date，不要带 body_md（正文很长，读正文时再取）。status 的取值：published 已发布（可据以作答）、draft 草稿（还未发布）、revising 修订中、abolished 已废止（不再有效，不据以作答）。display_name 是显示名称「所属单位：制度名称」：不同单位常有同名制度（如各公司都有差旅费管理办法），靠它分清是哪家单位的；结果里的 __link 是现成的制度链接，链接文字就是 display_name，提到这份制度时照抄。summary 是一两句话的目录摘要，可能为空，为空不代表没有正文。category_group 是制度大类：governance 治理类、operations 经营管理类、party 党工纪类；category 是其下的制度分类（小类）。policy_level 是制度层级：level_1 一级（公司基本管理制度）、level_2 二级（部门基本制度）、level_3 三级（配套管理细则），可能为空。
+- 制度目录：对象 brightrule_policy。只看 status = "published" 的制度；读目录时只取字段 id、display_name、title、doc_no、category_group、category、policy_level、owning_unit、issuing_unit、department、summary、effective_date，不要带 body_md（正文很长，读正文时再取）。status 的取值：published 已发布（可据以作答）、draft 草稿（还未发布）、revising 修订中、abolished 已废止（不再有效，不据以作答）。display_name 是显示名称「所属单位：制度名称」：不同单位常有同名制度（如各公司都有差旅费管理办法），靠它分清是哪家单位的；结果里的 __link 是现成的制度链接，链接文字就是 display_name，提到这份制度时照抄。owning_unit 是所属单位（指向平台的单位，即 display_name 冒号前的那家单位），按单位取舍制度时以它为准。summary 是一两句话的目录摘要，可能为空，为空不代表没有正文。category_group 是制度大类：governance 治理类、operations 经营管理类、party 党工纪类；category 是其下的制度分类（小类）。policy_level 是制度层级：level_1 一级（公司基本管理制度）、level_2 二级（部门基本制度）、level_3 三级（配套管理细则），可能为空。
 - 制度正文：就在制度记录上，字段 body_md（Markdown，已脱敏）。doc_no 是文号，引用出处时写在制度名之后。has_images = true 表示正文里有图片等内容（正文里只留「（图片）」等标记），你看不到；问题恰好涉及这些位置时，照实说明需查看原件。
 - 附件：对象 brightrule_policy_attachment（制度附件），挂在制度下（字段 policy）。label 是原文里的编号（附件1、附表2），title 是附件自己的名称，body_md 是附件全文（已脱敏，可能为空）。附件与正文一起读；只是待填写的空白表格的，不作答复依据，只告诉员工有这个表。
 - 不读 original_file（原件文件），也不调用 read_file：交给你的只能是脱敏正文。
@@ -51,6 +51,24 @@ export const PolicyInquirySkill = defineSkill({
    - 员工问「这个制度讲了什么 / 最新内容是什么」：读正文后按章概括要点，列出章节和主要条款号，不要只复述目录字段。
 2. **没有指定制度**：读制度目录（status = "published"）。目录可能超过 50 份，每页最多 50 条，按 offset 翻页直到读完。从目录里选出与问题最相关的 1–3 份（按名称、分类、摘要判断；员工说法与制度用词不同时按意思判断，如「打车」对应交通、网约车，「带薪假」对应年休假，「升职、职级」对应职业生涯、专业职级），再逐份读正文。
 3. 读正文时注意附则、例外条款，以及「按《某制度》执行」这类引用：引用的是另一份制度时，必要时按第 1 步的方法把它也读出来。
+
+## 按提问人的所属单位作答
+
+先弄清提问人属于哪家单位，来源按顺序：
+
+1. 系统提示里给出了提问人信息（所属公司、所属单位及上级单位）时，以它为准，不再问员工。
+2. 员工在本次对话里说过自己的公司或部门（如「我是某某公司的」），就用它，整段对话沿用，不再问。
+3. 都没有时，不要一开始就问，先按下文选制度、读正文。
+
+选制度和作答时：
+
+- 本公司优先：所属单位是提问人所属公司的制度，优先据以作答。
+- 本公司没有相关规定的，用上级单位（集团）的制度作答，结论里写明是集团的规定。
+- 其他平级公司的制度不作为答案；最多在末尾提一句「某公司另有类似规定，仅供参考」。
+- 员工明确问的是另一家单位的规定（如「乙公司的差旅标准是多少」），按问的那家单位作答。
+- 还不知道提问人属于哪家公司，而相关规定只有集团一份，或各单位规定一致：直接作答，不用问。
+- 还不知道提问人属于哪家公司，而集团和下属公司（或几家下属公司）对同一事项规定不同：不要猜。结论里先写集团规定，再按单位列出另有规定的公司和不同之处（依据、出处照常写），最后问一句「请问您在哪家公司？告诉我后按贵公司的规定答复」。同一段对话只问一次。
+- 职级、岗位同理：规定按职级或岗位分档，而员工没说自己的职级或岗位时，把各档标准都列出来，并请员工说明以便确认；不要因为不知道职级而不答。
 
 ## 作答规则
 

@@ -14,6 +14,7 @@ import * as permissions from './src/security';
 import * as capabilities from './src/security/capabilities';
 import * as datasets from './src/datasets';
 import * as aiContexts from './src/ai-contexts';
+import * as pages from './src/pages';
 import { BrightRuleSeedData } from './src/data/seed';
 import { policyHooks } from './src/qa';
 
@@ -102,4 +103,5 @@ export default defineStack({
   capabilities: [capabilities.PolicyDiagnoseCapability, capabilities.PolicyMaintainCapability],
   datasets: exportsOf(datasets),
   aiContexts: exportsOf(aiContexts),
+  pages: exportsOf(pages),
 });

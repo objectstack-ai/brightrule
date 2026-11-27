@@ -28,6 +28,7 @@ const mainApp: UI.App = {
   name: 'brightrule_main_app',
   label: '明规',
   navigation: [
+    { id: 'brightrule_home_nav', type: 'page', pageName: 'brightrule_home', label: '问制度', icon: 'message-circle-question' },
     { id: 'brightrule_policy_library_nav', type: 'object', objectName: Policy.name, viewName: 'published', label: '制度库', icon: 'library' },
     {
       id: 'brightrule_policy_suggestion_nav',

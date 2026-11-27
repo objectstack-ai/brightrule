@@ -9,6 +9,27 @@ import { Policy } from '../objects/policy.object.js';
 // form; 「文件性质」 sits beside 上级制度, which a forwarded or followed policy
 // points at. 制度大类 and 制度层级 (brightrule#54) sit beside 制度分类, so a
 // list filters and groups by the policy system's 三类三层级.
+// 制度库 by 制度大类: what the home page's three cards open (src/pages/home.page.ts).
+const publishedOf = (group: string, label: string) => ({
+  label: `制度库 · ${label}`,
+  type: 'grid' as const,
+  columns: [
+    { field: 'title' },
+    { field: 'doc_no' },
+    { field: 'category' },
+    { field: 'policy_level' },
+    { field: 'owning_unit' },
+    { field: 'is_trial' },
+    { field: 'effective_date' },
+    { field: 'summary' },
+  ],
+  filter: [
+    { field: 'status', operator: 'equals' as const, value: 'published' },
+    { field: 'category_group', operator: 'equals' as const, value: group },
+  ],
+  sort: [{ field: 'effective_date', order: 'desc' as const }],
+});
+
 const policyViews: UI.View = {
   object: Policy.name,
   list: {
@@ -53,6 +74,9 @@ const policyViews: UI.View = {
       filter: [{ field: 'status', operator: 'equals', value: 'published' }],
       sort: [{ field: 'effective_date', order: 'desc' }],
     },
+    published_governance: publishedOf('governance', '治理类'),
+    published_operations: publishedOf('operations', '经营管理类'),
+    published_party: publishedOf('party', '党工纪类'),
   },
 };
 

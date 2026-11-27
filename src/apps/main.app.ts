@@ -15,7 +15,9 @@ import { POLICY_MAINTAIN_CAPABILITY } from '../security/capabilities.js';
 // 'group' entry with children nests them) rather than a second app, and give
 // it a list view — `objectstack generate view OBJECT` writes one.
 // Navigation follows the two audiences (docs/review-2026-11-24.md, M1/M2):
-// employees see the library and 制度意见; policy administrators get 「制度维护」.
+// employees see 问制度 and the library; policy administrators get 「制度维护」,
+// which also holds 制度意见 (employees file theirs from the policy page's
+// 制度意见 tab, 2026-11-27).
 // 制度附件 is the policy's master-detail child: it is read on the policy's
 // record page, not from a menu of its own. Employees ask in the AI chat; the
 // inquiry and clause objects are gone (brightrule#19), as are the version and
@@ -31,13 +33,6 @@ const mainApp: UI.App = {
     { id: 'brightrule_home_nav', type: 'page', pageName: 'brightrule_home', label: '问制度', icon: 'message-circle-question' },
     { id: 'brightrule_policy_library_nav', type: 'object', objectName: Policy.name, viewName: 'published', label: '制度库', icon: 'library' },
     {
-      id: 'brightrule_policy_suggestion_nav',
-      type: 'object',
-      objectName: PolicySuggestion.name,
-      label: '制度意见',
-      icon: 'message-square-warning',
-    },
-    {
       id: 'brightrule_maintain_group',
       type: 'group',
       label: '制度维护',
@@ -45,6 +40,13 @@ const mainApp: UI.App = {
       requiredPermissions: [POLICY_MAINTAIN_CAPABILITY],
       children: [
         { id: 'brightrule_policy_nav', type: 'object', objectName: Policy.name, label: '全部制度', icon: 'book-open' },
+        {
+          id: 'brightrule_policy_suggestion_nav',
+          type: 'object',
+          objectName: PolicySuggestion.name,
+          label: '制度意见',
+          icon: 'message-square-warning',
+        },
       ],
     },
   ],

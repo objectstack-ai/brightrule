@@ -1,6 +1,7 @@
 import * as UI from '@objectstack/spec/ui';
 import { Policy } from '../objects/policy.object.js';
 import { PolicySuggestion } from '../objects/policy-suggestion.object.js';
+import { POLICY_MAINTAIN_CAPABILITY } from '../security/capabilities.js';
 
 /**
  * Main App
@@ -21,8 +22,8 @@ import { PolicySuggestion } from '../objects/policy-suggestion.object.js';
 // relation queues (brightrule#45). 制度意见 is private (brightrule#57): an
 // employee's list holds only their own, an administrator's all of them. The
 // Notes sample is to be deleted (#10), so it has no entry. The first item is
-// where the app opens. Hiding 「制度维护」 from employees waits for the
-// visibility rules (#10).
+// where the app opens. 「制度维护」 requires the 制度维护 capability, which only
+// 制度管理员 grants, so employees do not see it.
 const mainApp: UI.App = {
   name: 'brightrule_main_app',
   label: '明规',
@@ -40,6 +41,7 @@ const mainApp: UI.App = {
       type: 'group',
       label: '制度维护',
       icon: 'book-open',
+      requiredPermissions: [POLICY_MAINTAIN_CAPABILITY],
       children: [
         { id: 'brightrule_policy_nav', type: 'object', objectName: Policy.name, label: '全部制度', icon: 'book-open' },
       ],

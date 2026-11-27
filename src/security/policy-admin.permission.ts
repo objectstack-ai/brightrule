@@ -1,6 +1,6 @@
 import { definePermissionSet } from '@objectstack/spec/security';
 import { SUGGESTION_TRIAGE_FIELDS } from './suggestion-fields.js';
-import { POLICY_DIAGNOSE_CAPABILITY } from './capabilities.js';
+import { POLICY_DIAGNOSE_CAPABILITY, POLICY_MAINTAIN_CAPABILITY } from './capabilities.js';
 
 /** Everything on one object: read and edit every record, past sharing. */
 const ALL = {
@@ -40,5 +40,5 @@ export const PolicyAdminPermissionSet = definePermissionSet({
   fields: Object.fromEntries(
     SUGGESTION_TRIAGE_FIELDS.map((f) => [`brightrule_policy_suggestion.${f}`, { readable: true, editable: true }]),
   ),
-  systemPermissions: [POLICY_DIAGNOSE_CAPABILITY],
+  systemPermissions: [POLICY_DIAGNOSE_CAPABILITY, POLICY_MAINTAIN_CAPABILITY],
 });

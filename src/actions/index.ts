@@ -4,3 +4,4 @@
 // and a action file this index does not export is never loaded.
 export {};
 export { DiagnosePolicyAction } from './diagnose-policy.action.js';
+export { AskPolicyAction } from './ask-policy.action.js';

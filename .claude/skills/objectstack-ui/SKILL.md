@@ -1,24 +1,17 @@
 ---
 name: objectstack-ui
 description: >
-  Author ObjectStack UI metadata — Views (list/form/kanban/calendar/gantt),
-  Apps (navigation), Pages (structured plus the HTML and React source-authoring
-  tiers, ADR-0080/0081), Dashboards, Reports, Charts, Actions, and
-  package Docs (`src/docs/*.md`). Use when
-  the user is adding `*.view.ts` / `*.page.ts` / `*.app.ts` /
-  `*.dashboard.ts` / `*.report.ts` / `*.dataset.ts` / `*.action.ts` /
-  `src/docs/*.md` files or designing a Studio-rendered UI surface.
-  Do not use for: data schema (see objectstack-data), multi-step flows that
-  BRANCH on logic between steps (those are `*.flow.ts` with `type: 'screen'` —
-  see objectstack-automation; a stepped form over ONE object is this skill's
-  `formViews` `type: 'wizard'`), or Studio's own admin UI (that
-  ships with the platform). CEL expressions in
-  visibility/conditional rules: load objectstack-formula alongside.
+  Build what users see in an ObjectStack app, in a project or through MCP: list
+  / form / kanban / calendar views, navigation, pages, dashboards, reports,
+  charts, action buttons and package docs. Use when changing a screen, menu,
+  chart or button, or editing `*.view.ts` / `*.page.ts` / `*.app.ts`. Not for
+  objects and fields (objectstack-data), screen flows that branch between steps
+  (objectstack-automation), or `@object-ui/*` React code (objectui).
 license: Apache-2.0
-compatibility: Requires @objectstack/spec 18.x (Zod v4 schemas)
+compatibility: Requires @objectstack/spec 19.x (Zod v4 schemas)
 metadata:
   author: objectstack-ai
-  version: "18.6.0"
+  version: "19.0.0-next.0"
   domain: ui
   tags: view, app, page, dashboard, report, chart, action, widget, doc
 ---
@@ -36,10 +29,10 @@ metadata:
    go). Add beside what is there; reuse a declared dataset, field group or view.
 3. **Read the type's contract.** [references/_index.md](./references/_index.md)
    points at each type's Zod source in `node_modules/@objectstack/spec/src/`.
-   `Read` it for exact keys, enum members and refusals, never from memory: it
-   decides what to write. A running environment serves the parsed shape as
-   JSON Schema (`GET /api/v1/meta/types`, `entries[].schema`): a defaulted
-   key reads as required and a bare-string predicate as `{}`.
+   `Read` it for exact keys, enum members and refusals, never from memory. A
+   running environment serves the parsed shape as JSON Schema
+   (`GET /api/v1/meta/types`, `entries[].schema`): a defaulted key reads as
+   required and a bare-string predicate as `{}`.
 4. **Verify before reporting done.** `os validate` (`npm run validate` in a
    scaffolded project; `os build` runs the same gates). Most traps below pass
    it.
@@ -48,22 +41,23 @@ metadata:
 
 Two more: [List Views](#list-views), [Actions](#actions).
 
-1. **A long form stays `simple`**: collapse what is rarely filled and size it
-   with `columns` and `modalSize`. `tabbed` flags a required field only on its
-   own tab and overflows on a phone
-   ([Form Views](./rules/list-views.md#form-views)).
-2. **A record entered with its line items is `inlineEdit` on the child's
-   `master_detail` field**, before any custom page, and its grid needs no "Add
-   line" button. A parent or child declaring `enable.apiMethods` must list
-   `'bulk'`, or the save is refused `405`
+1. **New and Edit are the object's fields and `fieldGroups`, never a form
+   view**: they load no `form` or `formViews.create`, which parse.
+   `showOnCreate: false` keeps a field off every create surface (refused
+   beside `required: true`): [Form Views](./rules/list-views.md#form-views).
+2. **A record entered with its line items is a parent field group naming the
+   child** (`fieldGroups: [{ key: 'lines', label: 'Lines', relatedList:
+   'invoice_line' }]`), before any custom page; without it nothing changes:
+   the child is a tab and the form has no lines, whatever `inlineEdit` says.
+   Its grid needs no "Add line" button. A parent or child declaring
+   `enable.apiMethods` must list `'bulk'`, or the save is refused `405`
    ([Master-Detail Forms](./rules/list-views.md#master-detail-forms-parent--child-line-items)).
 3. **A persisted chart binds a declared dataset.** A widget or report names a
    `defineDataset` and selects its `dimensions` / `values` by name; an object
    without one has no analytics face. A dataset is narrow: a window, a to-many
    rollup or a computed dimension is a stored field or app code, never forced
    into one; an ad-hoc chart in a `kind: 'react'` page needs none. Read
-   [Dashboards](./rules/dashboards.md#dataset-bound-widgets) before writing any
-   widget, dataset or chart.
+   [Dashboards](./rules/dashboards.md#dataset-bound-widgets) first.
 4. **A filter token is presentation scope, not security.** `{current_user_id}`,
    `{today}` and the rest (vocabulary: objectstack-query → `rules/filters.md`,
    load it before writing one; an unrecognised token is a build error) decide
@@ -71,7 +65,8 @@ Two more: [List Views](#list-views), [Actions](#actions).
    must never be what keeps a user from someone else's data.
 5. **The object declares its record page.** Related lists, their order and
    filter are flags on the object and its fields, not a page file; how a record
-   opens is one list-view key, and the reader's own display choices are never
+   opens from an object's list is not authored (the name opens the page, its
+   hover icon the drawer), and the reader's own display choices are never
    metadata ([Record Page](./rules/record-page.md)).
 
 ## Where to go
@@ -79,10 +74,10 @@ Two more: [List Views](#list-views), [Actions](#actions).
 | Authoring | In | Open first |
 |:--|:--|:--|
 | A list, board, calendar, gallery or gantt: columns, `filter`, quick filters, toolbar search, sorting, grouping | `src/views/*.view.ts` | [List Views](./rules/list-views.md) |
-| A form (`simple` / `tabbed` / `wizard`): width, columns and `sections`; master-detail (a parent with line items), a public form, field conditional rules | `src/views/*.view.ts` | [Form Views](./rules/list-views.md#form-views) |
+| New / Edit form (field groups, `showOnCreate`, line items, field rules); a named or public form | the object; `src/views/*.view.ts` | [Form Views](./rules/list-views.md#form-views) |
 | An app and its navigation; who sees or opens it; object nav, a `filters` slice or an interface page | `src/apps/*.app.ts` | [Navigation](./rules/navigation.md) |
-| What a record page shows: related lists, a slotted or full page, drawer or page | the object | [Record Page](./rules/record-page.md) |
-| A button or operation: `locations`, visibility, dialog and toast copy, params, new tab, the body's `ctx` | `src/actions/*.actions.ts` | [Actions](./rules/actions.md) |
+| What a record page shows: related lists, a slotted or full page; how a record opens | the object | [Record Page](./rules/record-page.md) |
+| A button or operation: `locations`, visibility, dialog and toast copy, params, new tab, the body's `ctx`, refusing by code (`refusals`) | `src/actions/*.action.ts`, `*.actions.ts` | [Actions](./rules/actions.md) |
 | A number, chart, KPI or report over records: datasets, widgets, dashboard filters, `compareTo`, date bucketing, drilldown, cubes | `src/datasets/*.dataset.ts`, `src/dashboards/*.dashboard.ts`, `src/reports/*.report.ts` | [Dashboards](./rules/dashboards.md) |
 | A page (regions, components, print, `kind: 'html'` / `'react'` source, styling) or package docs | `*.page.ts`, `src/docs/*.md` | [Pages & Docs](./rules/pages.md) |
 | The props of a block in a `kind: 'react'` page | | [react-blocks.md](./references/react-blocks.md) |
@@ -130,13 +125,18 @@ type's keys: [Navigation](./rules/navigation.md).
 ## Actions
 
 **An operation is an `action`, never a view, and a write button must write.**
-"Mark as done", "approve", "set status to X" is `defineAction` with
-`objectName` and `locations`; with neither `locations` nor a view naming it,
+"Mark as done", "approve", "set status to X" is an action (`defineAction` in
+TypeScript) with `objectName` and `locations`; with neither `locations` nor a view naming it,
 it renders nowhere. `ctx.record` is a read-only snapshot and the body's return
 value is applied to nothing: a body that returns or assigns the new values
-reports success and changes nothing. Call the API: `type: 'script'`,
-`body: { language: 'js', source: "await ctx.api.object('task').update({ id: ctx.recordId, status: 'done' });", capabilities: ['api.write'] }`,
-with the option `value`, never its label ([Actions](./rules/actions.md)).
+reports success and changes nothing. Call the API, with the option `value`,
+never its label ([Actions](./rules/actions.md)):
+
+```json
+{ "name": "mark_done", "label": "Mark as done", "objectName": "task", "locations": ["record_header"],
+  "type": "script", "body": { "language": "js", "capabilities": ["api.write"],
+    "source": "await ctx.api.object('task').update({ id: ctx.recordId, status: 'done' });" } }
+```
 
 ### Action Types
 
@@ -148,8 +148,9 @@ with the option `value`, never its label ([Actions](./rules/actions.md)).
 | `flow` | Launch a screen/auto-launched flow by name; a multi-step operation is this, with a flow you also author |
 | `api` | Call a registered API endpoint |
 | `form` | Open a FormView by name (routed to `/_console/forms/:name`) |
+| `ask_ai` | Open the in-app assistant focused on the one record the action runs on; no `target`, never `ai.exposed: true` |
 
-Every type but `script` requires `target`.
+Every type but `script` and `ask_ai` requires `target`.
 
 ## Report Types
 

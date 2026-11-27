@@ -4,7 +4,7 @@
     {
       "id": 1,
       "prompt": "Every night at 02:00, mark `subscription` records whose `renewal_date` has passed as `lapsed`; `status` is a readonly field only automation may change.",
-      "expected_output": "A `defineFlow` with `type: 'schedule'`, the cadence on the START NODE's `config.schedule: { type: 'cron', expression: '0 2 * * *' }` (no top-level `schedule`), `runAs: 'system'` (a readonly field is stripped under `runAs: 'user'`); one `update_record` with a where-map `filter` (`renewal_date: { $lt: '{today}' }`) and `fields: { status: 'lapsed' }` (not `values`), `label` on every node, `edges` (never `next`), an `end` node.",
+      "expected_output": "A `defineFlow` with `type: 'schedule'`, the cadence on the START NODE's `config.schedule: { type: 'cron', expression: '0 2 * * *', timezone: 'UTC' }` (no top-level `schedule`; the request names no zone, and a cron with none warns `flow-schedule-timezone-missing`), `runAs: 'system'` (a readonly field is stripped under `runAs: 'user'`); one `update_record` with a where-map `filter` (`renewal_date: { $lt: '{today}' }`) and `fields: { status: 'lapsed' }` (not `values`), `label` on every node, `edges` (never `next`), an `end` node.",
       "files": [],
       "assertions": {
         "must_contain": [
@@ -354,7 +354,7 @@
     {
       "id": 20,
       "prompt": "Our package `acme.billing` ships the flow `billing_invoice_paid`. When it runs it should call the `notify_owner` flow that the installed package `acme.crm` ships. Write the node and anything else the package needs.",
-      "expected_output": "A `type: 'subflow'` node with `config: { flowName: 'notify_owner' }` in `billing_invoice_paid`, plus `acme.billing`'s manifest declaring `dependencies: { 'acme.crm': '^1.0.0' }` (any range). A package flow's bare child name resolves to its own package's flow, else the one holder in its declared dependency closure plus `sys`; without the dependency the flow still passes `os validate`, and the node fails at run time (`outside-closure`, naming `acme.crm`). No copy of `notify_owner` into `acme.billing` or into the environment, and no package-qualified flow name.",
+      "expected_output": "A `type: 'subflow'` node with `config: { flowName: 'notify_owner' }` in `billing_invoice_paid`, plus `acme.billing`'s manifest declaring `dependencies: { 'acme.crm': '^1.0.0' }` (any range). A package flow's bare child name resolves to its own package's flow, else the one holder in its declared dependency closure plus `sys`; without the dependency the node fails at run time (`outside-closure`, naming `acme.crm`). `os validate` warns `flow-subflow-unknown` here with or without the dependency, because `acme.billing`'s own stack does not hold `notify_owner`: the warning is expected on this correct call and is not that failure. No copy of `notify_owner` into `acme.billing` or into the environment, and no package-qualified flow name.",
       "files": [],
       "assertions": {
         "must_contain": [
@@ -434,6 +434,16 @@
         "must_not_contain": [
           "isActive"
         ]
+      }
+    },
+    {
+      "id": 25,
+      "prompt": "A purchase-order approval step must hand the request to `procurement_supervisor` once it has waited 8 business hours: nights, weekends and public holidays must not count. Our plants keep a working calendar with the code `cn_plant`. How do I declare that on the approval node?",
+      "expected_output": "Sets `escalation: { timeoutHours: 8, clock: 'working_time', calendar: 'cn_plant', action: 'reassign', escalateTo: 'procurement_supervisor' }` in the node config. `clock` must be written: its default, `'wall_clock'`, counts nights, weekends and holidays. Under `working_time` the hours count on a working calendar: the `calendar` code, else the organization's default calendar, else refused, never wall-clock time. The calendar is `sys_work_calendar` data each organization maintains in Setup, so the app declares no calendar or holiday object and no hook that stamps the deadline. While the calendar cannot count the deadline (no such calendar, or not maintained that far) the request does not escalate and the inbox shows why, until the calendar is fixed. `calendar` without `clock: 'working_time'` is a lint error (`approval-escalation-calendar-without-working-time`).",
+      "files": [],
+      "assertions": {
+        "must_contain": ["clock: 'working_time'", "calendar: 'cn_plant'"],
+        "must_not_contain": ["3_600_000"]
       }
     }
   ]

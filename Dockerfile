@@ -31,7 +31,7 @@ RUN npx os build              # → dist/objectstack.json
 # Pinned at scaffold time to the @objectstack/cli version this project
 # resolved, so the runtime runs the same CLI that built your artifact.
 # Move both together when you upgrade — see docker/README.md tag table.
-FROM ghcr.io/objectstack-ai/objectstack:18.6.0
+FROM ghcr.io/objectstack-ai/objectstack:19.0.0-next.0
 COPY --from=build --chown=node:node /app/dist/objectstack.json /srv/app/objectstack.json
 
 # OS_DATABASE_URL, OS_AUTH_SECRET, and OS_SECRET_KEY are injected at runtime —

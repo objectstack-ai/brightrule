@@ -83,6 +83,7 @@ export const Policy = ObjectSchema.create({
     policy_no: Field.text({ label: '制度编号', maxLength: 50, group: 'basic' }),
     doc_no: Field.text({
       label: '文号',
+      searchable: true,
       maxLength: 100,
       group: 'basic',
       description: '发文字号，如「XX字〔2026〕1号」；引用出处时写在制度名之后',

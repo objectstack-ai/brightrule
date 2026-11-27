@@ -13,6 +13,8 @@ import * as picklists from './src/picklists';
 import * as permissions from './src/security';
 import * as capabilities from './src/security/capabilities';
 import * as datasets from './src/datasets';
+import * as aiContexts from './src/ai-contexts';
+import * as pages from './src/pages';
 import { BrightRuleSeedData } from './src/data/seed';
 import { policyHooks } from './src/qa';
 
@@ -56,6 +58,9 @@ export default defineStack({
   requires: [
     'automation',
     'triggers',
+    // 'record-context' serves get_record_context, which reads the context pack
+    // behind 「问这份制度」 (src/ai-contexts, ADR-0160).
+    'record-context',
   ],
 
   // Generic connector executors, default-present so you can add a `connectors:`
@@ -95,6 +100,8 @@ export default defineStack({
   permissions: exportsOf(permissions),
   // The authorization capabilities this app defines (ADR-0066 D1); the
   // permission sets above grant them, actions require them.
-  capabilities: [capabilities.PolicyDiagnoseCapability],
+  capabilities: [capabilities.PolicyDiagnoseCapability, capabilities.PolicyMaintainCapability],
   datasets: exportsOf(datasets),
+  aiContexts: exportsOf(aiContexts),
+  pages: exportsOf(pages),
 });

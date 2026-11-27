@@ -25,3 +25,20 @@ export const PolicyDiagnoseCapability = defineCapability({
   scope: 'org',
 });
 
+
+/** Name of the 制度维护 capability, for the navigation group and the set that grants it. */
+export const POLICY_MAINTAIN_CAPABILITY = 'brightrule.policy_maintain';
+
+/**
+ * 制度维护 — see the 「制度维护」 navigation group (全部制度, drafts included).
+ * Granted by 制度管理员 (`brightrule_policy_admin`) only, so an employee's
+ * navigation holds 制度库 and 制度意见 and nothing else. It gates the menu, not
+ * the data: what a person may read is still the permission sets' and sharing
+ * rules' to say.
+ */
+export const PolicyMaintainCapability = defineCapability({
+  name: POLICY_MAINTAIN_CAPABILITY,
+  label: '制度维护',
+  description: '在导航中看到「制度维护」（全部制度，含草稿）',
+  scope: 'org',
+});

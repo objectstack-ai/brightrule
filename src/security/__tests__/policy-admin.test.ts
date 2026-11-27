@@ -153,7 +153,7 @@ describe('制度管理员 and 问询人 on the engine', () => {
     expect(stored.status).toBe('accepted');
   });
 
-  it('serves the 制度意见 menu entry to every employee', async () => {
+  it('serves 制度维护 (with 制度意见) to the policy office only', async () => {
     const entries = async (token: string) => {
       const app = (await json(await stack.apiAs(token, 'GET', '/meta/app/brightrule_main_app'))).item as Row;
       const ids: string[] = [];
@@ -166,10 +166,11 @@ describe('制度管理员 and 问询人 on the engine', () => {
       walk(app.navigation);
       return ids;
     };
-    expect(await entries(officer)).toContain('brightrule_policy_suggestion_nav');
+    const office = await entries(officer);
+    expect(office).toContain('brightrule_maintain_group');
+    expect(office).toContain('brightrule_policy_suggestion_nav');
     const own = await entries(employee);
-    expect(own).toContain('brightrule_policy_suggestion_nav');
-    expect(own).toContain('brightrule_policy_library_nav');
+    expect(own).toEqual(['brightrule_home_nav', 'brightrule_policy_library_nav']);
   });
 
   it("refuses a policy that names itself as its 上级制度, and accepts another one", async () => {

@@ -1,4 +1,5 @@
 import { ObjectSchema, Field } from '@objectstack/spec/data';
+import { F } from '@objectstack/spec';
 
 /**
  * 制度主表 — one row per policy, and its text (brightrule#45).
@@ -50,7 +51,11 @@ export const Policy = ObjectSchema.create({
   label: '制度',
   pluralLabel: '制度',
   icon: 'book-open',
-  nameField: 'title',
+  // The record's name everywhere — record links in AI answers, lookup pickers,
+  // related lists — carries the owning unit, since sibling companies issue
+  // policies of the same title (差旅费管理办法 …). Stored, so it is searchable
+  // and sortable; see `display_name`.
+  nameField: 'display_name',
   description: '每份制度一行：制度信息、正文和原件都在这里，附件在「制度附件」里',
 
   fieldGroups: [
@@ -64,6 +69,17 @@ export const Policy = ObjectSchema.create({
 
   fields: {
     title: Field.text({ label: '制度名称', required: true, searchable: true, maxLength: 200, group: 'basic' }),
+    // 「制度名称（所属单位）」, computed and stored on every write. It reads the
+    // unit's name through `owning_unit` at that write, so renaming a unit needs
+    // `os migrate stored-expressions --object brightrule_policy --field display_name --changed --apply`.
+    display_name: Field.text({
+      label: '显示名称',
+      maxLength: 320,
+      searchable: true,
+      group: 'basic',
+      expression: F`record.owning_unit.?name.orValue('') == '' ? record.title : record.title + '（' + record.owning_unit.?name.orValue('') + '）'`,
+      description: '制度名称（所属单位），自动生成；答复里的制度链接、关联选择框都显示它',
+    }),
     policy_no: Field.text({ label: '制度编号', maxLength: 50, group: 'basic' }),
     doc_no: Field.text({
       label: '文号',

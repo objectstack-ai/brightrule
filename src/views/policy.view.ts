@@ -73,6 +73,10 @@ const policyViews: UI.View = {
       ],
       filter: [{ field: 'status', operator: 'equals', value: 'published' }],
       sort: [{ field: 'effective_date', order: 'desc' }],
+      userFilters: {
+        element: 'dropdown' as const,
+        fields: [{ field: 'category_group' }, { field: 'category' }, { field: 'owning_unit' }, { field: 'policy_level' }],
+      },
     },
     published_governance: publishedOf('governance', '治理类'),
     published_operations: publishedOf('operations', '经营管理类'),

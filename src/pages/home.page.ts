@@ -5,10 +5,10 @@ import { definePage } from '@objectstack/spec/ui';
  *
  * `kind: 'html'`：云上不开 React 页面（OS_PAGE_REACT_ENABLED），html 页面只解析、
  * 不执行脚本，所以示例问题只是文字；「开始提问」链到控制台的 AI 问询
- * （/_console/ai/ask?new=1，开一个新对话）。针对某一份制度提问，在制度页点
+ * （/ai/ask?new=1，开一个新对话；链接是控制台内的路径，不带 /_console）。针对某一份制度提问，在制度页点
  * 「问这份制度」（src/actions/ask-policy.action.ts）。
  */
-const ASK_URL = '/_console/ai/ask?new=1';
+const ASK_URL = '/ai/ask?new=1';
 
 const EXAMPLES = [
   '出差住宿每晚最多能报多少？',
@@ -19,7 +19,7 @@ const EXAMPLES = [
   '公务用车可以私用吗？',
 ];
 
-const LIBRARY = '/_console/apps/brightrule_main_app/brightrule_policy/view';
+const LIBRARY = '/brightrule_policy/view';
 
 const card = (view: string, title: string, sub: string) => `
     <card>

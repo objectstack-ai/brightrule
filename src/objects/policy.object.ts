@@ -69,7 +69,7 @@ export const Policy = ObjectSchema.create({
 
   fields: {
     title: Field.text({ label: '制度名称', required: true, searchable: true, maxLength: 200, group: 'basic' }),
-    // 「制度名称（所属单位）」, computed and stored on every write. It reads the
+    // 「所属单位：制度名称」 (the unit first: many titles already end in a bracket, 「（试行）」), computed and stored on every write. It reads the
     // unit's name through `owning_unit` at that write, so renaming a unit needs
     // `os migrate stored-expressions --object brightrule_policy --field display_name --changed --apply`.
     display_name: Field.text({
@@ -77,8 +77,8 @@ export const Policy = ObjectSchema.create({
       maxLength: 320,
       searchable: true,
       group: 'basic',
-      expression: F`record.owning_unit.?name.orValue('') == '' ? record.title : record.title + '（' + record.owning_unit.?name.orValue('') + '）'`,
-      description: '制度名称（所属单位），自动生成；答复里的制度链接、关联选择框都显示它',
+      expression: F`record.owning_unit.?name.orValue('') == '' ? record.title : record.owning_unit.?name.orValue('') + '：' + record.title`,
+      description: '所属单位：制度名称，自动生成；答复里的制度链接、关联选择框都显示它',
     }),
     policy_no: Field.text({ label: '制度编号', maxLength: 50, group: 'basic' }),
     doc_no: Field.text({

@@ -44,7 +44,7 @@ export const PolicyReadingPage = definePage({
                   {
                     type: 'record:details',
                     properties: {
-                      sections: [{ name: 'body', label: '正文', columns: 1, fields: ['body_md'] }],
+                      sections: [{ columns: 1, fields: ['body_md'] }],
                     },
                   },
                 ],

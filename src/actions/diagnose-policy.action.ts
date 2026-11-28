@@ -24,7 +24,7 @@ export const DiagnosePolicyAction = defineAction({
   icon: 'sparkles',
   objectName: 'brightrule_policy',
   type: 'script',
-  locations: ['record_header'],
+  locations: ['record_page'],
   requiredPermissions: [POLICY_DIAGNOSE_CAPABILITY],
   body: {
     language: 'js',

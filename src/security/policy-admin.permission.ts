@@ -2,7 +2,7 @@ import { definePermissionSet } from '@objectstack/spec/security';
 import { SUGGESTION_TRIAGE_FIELDS } from './suggestion-fields.js';
 import { POLICY_DIAGNOSE_CAPABILITY, POLICY_MAINTAIN_CAPABILITY } from './capabilities.js';
 
-/** Everything on one object: read and edit every record, past sharing. */
+/** Everything on one object: read and edit every record, past sharing, and read every field (protocol 19: View All / Modify All no longer vote on fields). */
 const ALL = {
   allowCreate: true,
   allowRead: true,
@@ -10,6 +10,7 @@ const ALL = {
   allowDelete: true,
   viewAllRecords: true,
   modifyAllRecords: true,
+  viewAllFields: true,
 } as const;
 
 /**
@@ -40,12 +41,16 @@ export const PolicyAdminPermissionSet = definePermissionSet({
     // units are maintained by the platform's administrators.
     sys_business_unit: { allowRead: true },
   },
-  // Modify All already reaches every field; the triage fields are listed so
-  // the grant reads plainly beside the inquirer set's read-only mask. 大类 is
-  // not masked here (a mask beside Modify All binds nobody): the intake hook
-  // overwrites whatever is sent.
+  // Since protocol 19 Modify All widens records only and casts no field vote,
+  // so the inquirer set's read-only masks bind this set's holders too unless a
+  // field row here grants the edit. The triage fields are granted here; so is
+  // 大类, which the inquirer set masks read-only: a triage payload may carry
+  // it, and the intake hook overwrites whatever is sent.
   fields: Object.fromEntries(
-    SUGGESTION_TRIAGE_FIELDS.map((f) => [`brightrule_policy_suggestion.${f}`, { readable: true, editable: true }]),
+    [...SUGGESTION_TRIAGE_FIELDS, 'category_group'].map((f) => [
+      `brightrule_policy_suggestion.${f}`,
+      { readable: true, editable: true },
+    ]),
   ),
   systemPermissions: [POLICY_DIAGNOSE_CAPABILITY, POLICY_MAINTAIN_CAPABILITY],
   rowLevelSecurity: [

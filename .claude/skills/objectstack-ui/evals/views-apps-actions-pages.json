@@ -240,6 +240,36 @@
         "must_contain": ["actionLayout", "pinned", "more", "$export"],
         "must_not_contain": ["'clone', 'share']", "definePage"]
       }
+    },
+    {
+      "id": 25,
+      "prompt": "`crm_account` declares the field groups `basic_info` and `contact_info`. A 'New Intake' button opens an intake form on its own page; the team wants each group two columns wide there, and asks for the same two columns in the ordinary New dialog. Write the metadata and say what each surface does.",
+      "expected_output": "A named form under `formViews` whose sections reference the groups and declare the count, `sections: [{ group: 'basic_info', columns: 2 }, { group: 'contact_info', columns: 2 }]`, opened by a `type: 'form'` action whose `target` names it. The answer says the form page reads each section's `columns` (1 to 4, one column on a phone), and that the New and Edit dialog is built from the object's `fieldGroups`, never from this form view, at a column count the platform derives and nobody authors. Not `columns` on the form view itself (the form page does not read it), not a `columns` key on a `fieldGroups` entry, not `modalSize`, and not an answer that two columns cannot be authored anywhere.",
+      "files": [],
+      "assertions": {
+        "must_contain": ["formViews", "group: 'contact_info', columns: 2", "type: 'form'", "fieldGroups"],
+        "must_not_contain": ["modalSize:", "formViews.default"]
+      }
+    },
+    {
+      "id": 26,
+      "prompt": "Add a 'Delete Task' button on the `project_task` record page that deletes the task. Our in-app assistant must be able to run it too, but only after the user agrees, since a deleted task's time entries go with it.",
+      "expected_output": "One registered `defineAction` on `objectName: 'project_task'` with a placement (`locations: ['record_header']`), a body that deletes the current record (a `type: 'script'` `js` body calling `ctx.api.object('project_task').delete(...)` on `ctx.recordId`, with `capabilities: ['api.write']`), `confirmText` for the person clicking, and `ai: { exposed: true, description: '…', requiresConfirmation: true }`. `confirmText` is the click dialog's copy only and gates no AI call, so the assistant's run is held for the user's approval by `ai.requiresConfirmation: true`, not by `confirmText` or by a sentence in `ai.description` asking the model to confirm first.",
+      "files": [],
+      "assertions": {
+        "must_contain": ["requiresConfirmation: true", "exposed: true", "confirmText", "project_task"],
+        "must_not_contain": ["requireConfirmation:", "confirm: true"]
+      }
+    },
+    {
+      "id": 27,
+      "prompt": "`project_task` has a `status` select and a number field `estimate_hours`. Add a board grouped by status. Each lane shows the average estimate of all its tasks. Cards show `title`, `owner_id` and `due_date` as values without the field names, and a task with no due date keeps that row empty so the cards of a lane line up. Write the view.",
+      "expected_output": "A new `listViews` entry (`type: 'kanban'`, the required top-level `columns`) whose `kanban` block carries `groupByField: 'status'`, `summary: { type: 'avg', field: 'estimate_hours' }`, `showFieldLabels: false` and `hideEmptyFields: false`. `summary` is an object naming the statistic and its `field`, computed by the query over every task of the lane, not only the loaded cards. Both card settings default to true, so each is written only because the request asks for the opposite. Not the list column shorthand `summary: 'avg'`, and not `summarizeField`, which only sums.",
+      "files": [],
+      "assertions": {
+        "must_contain": ["groupByField", "summary", "avg", "estimate_hours", "showFieldLabels: false", "hideEmptyFields: false"],
+        "must_not_contain": ["showFieldLabels: true"]
+      }
     }
   ]
 }

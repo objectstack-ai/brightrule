@@ -17,7 +17,7 @@ license: Apache-2.0
 compatibility: Requires @objectstack/spec 19.x and @objectstack/core 19.x (Zod v4 schemas), Node 22+
 metadata:
   author: objectstack-ai
-  version: "19.0.0-next.0"
+  version: "19.0.0-next.2"
   domain: platform
   tags: project, defineStack, driver, hono, plugin, kernel, service, requires, capability, DI, lifecycle, cli, deploy, ops
 ---
@@ -32,11 +32,11 @@ metadata:
 
 `defineStack()` accepts an `ObjectStackDefinitionInput` whose top-level keys
 are `manifest`, `packages`, `objects`, `objectExtensions`, `picklists`,
-`picklistExtensions`, `views`, `apps`, `pages`, `dashboards`, `reports`,
+`picklistExtensions`, `views`, `forms`, `apps`, `pages`, `dashboards`, `reports`,
 `datasets`, `actions`, `flows`, `jobs`,
 `emailTemplates`, `docs`, `books`, `positions`, `permissions`,
 `capabilities`, `sharingRules`, `queues`, `assignmentRules`, `apis`, `webhooks`, `api`, `server`,
-`agents`, `tools`, `skills`, `aiContexts`, `hooks`, `functions`, `mappings`,
+`agents`, `tools`, `skills`, `aiContexts`, `knowledgeSources`, `hooks`, `functions`, `mappings`,
 `analyticsCubes`, `connectors`, `data` (seed), `datasources`,
 `datasourceMapping`, `translations`, `i18n`, `plugins`, `devPlugins`,
 `devHint`, `devLogins`, `demoStaff`, `requires`, `tiers`, `onEnable`, `appName`, `email`, `sms`, `push`.
@@ -300,7 +300,7 @@ token through the `CAPABILITY_PROVIDERS` registry in
 | Token | Provider package |
 |:--|:--|
 | `automation` | `@objectstack/service-automation` — flows, and any declarative `connectors:` entry |
-| `analytics`° `cache`° `storage`° `queue`° `job`° `messaging`° `realtime` `settings`° `sms`° `push` `record-context` | `@objectstack/service-` + the token ([the `push` block](./references/operations.md#mobile-push)); `record-context` serves `get_record_context`, **objectstack-ai** [context packs](../objectstack-ai/references/context-packs.md) |
+| `analytics`° `cache`° `storage`° `queue`° `job`° `messaging`° `realtime` `settings`° `sms`° `push` `record-context` `knowledge` | `@objectstack/service-` + the token ([the `push` block](./references/operations.md#mobile-push)); `record-context` serves `get_record_context`, **objectstack-ai** [context packs](../objectstack-ai/references/context-packs.md) |
 | `mailbox` | `@objectstack/service-mailbox` — inbound mail |
 | `marketplace` `package-registry`° | `@objectstack/service-package` |
 | `audit` `email`° `sharing`° `approvals` `webhooks` | `@objectstack/plugin-` + the token |

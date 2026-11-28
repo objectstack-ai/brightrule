@@ -62,7 +62,7 @@ AI 诊断一份制度时提出的一条建议，主从挂在制度下（`sharing
 
 ## 4 AI 诊断按钮 `brightrule_policy_diagnose`
 
-制度记录页头部（`record_header`）的动作，`type: 'script'`。
+制度记录页上的动作（`record_page`），`type: 'script'`。
 
 - **权限**：`requiredPermissions: ['brightrule.policy_diagnose']`。同一声明两处生效：平台动作入口（`POST /api/v1/actions/brightrule_policy/brightrule_policy_diagnose`、MCP `run_action`）对没有该能力的调用者返回 403；控制台按当前用户的能力隐藏按钮。
 - **现在的行为**：沙箱脚本体只返回 `{ ok: true, message: 'AI 诊断功能开发中' }`，界面提示「AI 诊断功能开发中」。脚本体不授予任何 `ctx.api` 能力（`capabilities: []`），写不了任何数据。

@@ -10,8 +10,8 @@
 
 | Type | Lifecycle | Required | Sharing | Roll-ups | Use Case |
 |:-----|:----------|:---------|:--------|:---------|:---------|
-| `lookup` | Independent | Optional by default | Independent | Supported via `summary` | "Related to" |
-| `master_detail` | Coupled (cascade delete) | Forced only under `controlled_by_parent`, unless the optional master (below); else lint-warned | Inherits parent; read-on-master opt-ins (below) | Supported via `summary` | "Owned by" |
+| `lookup` | Independent | Optional by default | Independent | Via `summary` | "Related to" |
+| `master_detail` | Coupled (cascade delete) | Forced only under `controlled_by_parent`, unless the optional master (below); else lint-warned | Inherits parent; read-on-master opt-ins (below) | Via `summary` | "Owned by" |
 | `tree` | Self-reference | Optional — and so is `reference`, which when written must name this object itself; any other object is refused at parse, not lint-warned | N/A | Not available | Hierarchical |
 
 ## Patterns
@@ -23,7 +23,6 @@ export default ObjectSchema.create({
   name: 'contact',
   sharingModel: 'public_read_write',
   fields: {
-    first_name: { type: 'text', required: true },
     account_id: {
       type: 'lookup',
       reference: 'account',
@@ -41,14 +40,6 @@ export default ObjectSchema.create({
   sharingModel: 'public_read_write',
   fields: {
     invoice_number: { type: 'text', required: true },
-    total: {
-      type: 'summary',
-      summaryOperations: {
-        object: 'invoice_line_item',
-        field: 'amount',
-        function: 'sum',
-      },
-    },
   }
 });
 
@@ -63,7 +54,6 @@ export default ObjectSchema.create({
       deleteBehavior: 'cascade',
       required: true,
     },
-    product: { type: 'text', required: true },
     amount: { type: 'currency', required: true },
   }
 });
@@ -114,7 +104,10 @@ an omitted `required` as `true`.
 
 **Import resolves a detail's name within its master** when the row sets that
 master (one reference column to it) or the lookup's `dependsOn` sibling: a tie
-there is `reference_ambiguous`, another master's detail `reference_not_found`.
+there is `reference_ambiguous`, another master's detail `reference_out_of_scope`
+(`scope: [{ field, value }]` names the scoping columns). A name no record
+has, or a scoping field the caller cannot read or the engine cannot filter by
+(such as a formula), is `reference_not_found`.
 
 ### Many-to-Many: Junction Object
 
@@ -185,8 +178,8 @@ or a child not offering Change Owner itself (a `controlled_by_parent` detail).
 ## Roll-up Summaries
 
 A parent `summary` field aggregates a child collection. The engine recomputes it
-**server-side** whenever a child is inserted/updated/deleted (inside the same
-transaction as the write, so it's consistent).
+**server-side** on every child insert/update/delete, in the write's
+transaction.
 
 ```json
 {
@@ -197,8 +190,10 @@ transaction as the write, so it's consistent).
 
 `object` is the child object to aggregate, `field` its field (ignored for
 `count`), `function` one of `count` / `sum` / `min` / `max` / `avg`. Optional:
-`relationshipField` (auto-detected from the child's `master_detail`/`lookup`
-field referencing this parent when omitted) and `filter` (below).
+`filter` (below) and `relationshipField` (omitted: the child's `lookup` /
+`master_detail` referencing this parent). Refused at publish when omitted and the
+child has neither, or naming no child field
+(`rollup/child-without-parent-reference`).
 
 Empty collections roll up to `0` for `count`/`sum`, `null` for `min`/`max`/`avg`.
 
@@ -231,8 +226,7 @@ child object, the aggregated field, or a field `filter` tests. Decide per set
 from the request: it sees the children → grant the read; the total but not the
 children → keep the column readable and add `rollupSourceUnreadableReason` to
 the set's entry for it (the warning becomes a note quoting the reason; refused
-blank or beside `readable: false`); neither → mask the summary on that set,
-after removing any Modify All it holds on the parent (it overrides the mask).
+blank or beside `readable: false`); neither → mask the summary on that set.
 Never add the reason to silence a total the request withholds: mask it.
 
 A permission set (in TypeScript, the argument of `definePermissionSet(...)`)
@@ -256,8 +250,7 @@ The parent's standard create/edit form enters a child's rows where **a
 field group of the parent names that child** (`relatedList`): the group draws
 the child's table at its place in the record's details and in the parent's
 entry form (below the form's fields when its sections name no field group),
-and parent + children save in **one atomic transaction**. Without the group
-nothing changes: the child is a tab and the form has no lines. A parent or child
+and parent + children save in **one atomic transaction**. A parent or child
 declaring `enable.apiMethods` must list `'bulk'`, or that save is refused `405 OBJECT_API_METHOD_NOT_ALLOWED`.
 
 ```typescript
@@ -293,8 +286,7 @@ Omitted (a boolean is refused) — **smart default**: picks `form` when the chil
 rich/form-only fields (textarea, file, image, json, location…) or more than ~8
 editable fields, else `grid`.
 
-**Modeling a `'grid'` line item for the full editor.** The grid lights up extra
-behaviors from how you model the child + parent:
+**Modeling a `'grid'` line item for the full editor:**
 
 ```typescript
 // Parent (a field group names invoice_line, as above)
@@ -364,8 +356,11 @@ audit_ref: { type: 'master_detail', reference: 'invoice', relatedList: false },
   only the named lists show, in order, built-ins by name
   (`sys_attachment`, `sys_approval_request`, `sys_activity`). An entry is the child,
   `object.field` or `{ list, label, columns }`; its `label` translates at
-  `objects.{parent}._relatedLists.{list}.label` (none: nothing to translate).
-  A child in the stack with no inbound FK
+  `objects.{parent}._relatedLists.{list}.label` (none: no key). A `.custom`
+  arrangement re-stating the entry with no `label`, or hiding it, leaves none (a
+  bare child's name, labelled or not, covers each of its `child.field` lists too) and
+  `os validate` refuses the key: drop it, or re-state the entry, shown, with the
+  owner's `label`. A child in the stack with no inbound FK
   is refused everywhere; one that exists nowhere is refused by `os validate` /
   `os build` (bar a platform or sibling-artifact name) and by a metadata
   write naming no package (one into a package is stored, placing nothing).
@@ -373,8 +368,7 @@ audit_ref: { type: 'master_detail', reference: 'invoice', relatedList: false },
 `relatedListTitle` / `relatedListColumns` override the derived title / columns
 (columns: the child's `highlightFields`); an entry's `label` / `columns` win. Audit FKs
 (`created_by`/`updated_by`/`owner_id`) never become related lists. A child that
-references the parent through several FKs (e.g. `primary_account` +
-`partner_account`) yields **one related list per FK**; a self-referential FK
+references the parent through several FKs yields **one related list per FK**; a self-referential FK
 surfaces a "children" list.
 
 ## Incorrect vs Correct

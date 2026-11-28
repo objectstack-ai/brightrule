@@ -31,6 +31,7 @@
 在 ObjectOS 企业版上部署见 [`deploy/objectos-ee`](deploy/objectos-ee/README.md)；
 问询路径的实测数据见 [`docs/evaluation-2026-11-23.md`](docs/evaluation-2026-11-23.md)
 （评测时还有表单问询和向量检索，两者已在 brightrule#19 下线）。
+问询的优化方向、排序和评测集设计见 [`docs/inquiry-optimization-2026-11-27.md`](docs/inquiry-optimization-2026-11-27.md)。
 
 ---
 

@@ -13,9 +13,14 @@ import { SUGGESTION_TRIAGE_FIELDS } from './suggestion-fields.js';
  * write. No capability, so the 「AI 诊断」 action is hidden from and refused to
  * an employee.
  *
- * Which policies an employee may read (published only, by issuing unit, …) is
- * row-level security still to come (#10, docs/visibility.md): until then this
- * set reads every policy.
+ * `allowRead` on policies is the object grant only; WHICH policies an employee
+ * reads is decided by sharing, not here (docs/visibility.md principle 3). The
+ * policy object is private, and a per-unit sharing rule opens a unit's
+ * policies to the unit and every unit under it (brightrule#74, dimension 2;
+ * the rules are written by scripts/sharing/policy-unit-sharing.mjs). So an
+ * employee reads the policies of their own unit and of every unit above it,
+ * and none of a sibling's; an employee in no unit reads none. Attachments
+ * follow their policy (controlled_by_parent). Published-only is #70.
  */
 export const InquirerPermissionSet = definePermissionSet({
   name: 'brightrule_inquirer',

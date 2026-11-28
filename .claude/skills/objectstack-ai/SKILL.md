@@ -13,7 +13,7 @@ license: Apache-2.0
 compatibility: Requires @objectstack/spec 19.x (Zod v4 schemas)
 metadata:
   author: objectstack-ai
-  version: "19.0.0-next.0"
+  version: "19.0.0-next.2"
   domain: ai
   tags: agent, tool, skill, knowledge, context-pack, llm, embedding, mcp
 ---
@@ -43,9 +43,10 @@ metadata:
 |:---------|:--------|
 | `surface` | `'ask' \| 'build' \| 'both'` — which platform agent may bind this skill (default `'ask'`). Enforced in `resolveActiveSkills` at load: an incompatible binding is a **fast load error** (ADR-0063 §3) |
 | `description` | What the skill does — the agent reads it to decide when to use the skill |
-| `instructions` | Prompt guidance for this skill's context. **The one field the open edition serves**: `@objectstack/mcp` projects it onto the MCP `prompts` primitive, so a skill with blank `instructions` — or `active: false` — is not listed as a prompt at all |
+| `instructions` | Prompt guidance. On the open edition `@objectstack/mcp` projects it onto the MCP `prompts` primitive, so a skill with blank `instructions` — or `active: false` — is not listed |
 | `triggerConditions` | Programmatic activation rules (below) |
 | `active` | Enabled (default `true`) |
+| `context` | Bare name of the context pack the skill works from (**Context packs** below), resolved in the skill's package, then its dependency closure. Unless `tools` binds `get_record_context`, by name or wildcard, the parse refuses it |
 
 > A skill has **no `permissions` key** — removed in 17.0.0 because it gated
 > nothing. Gate at the **agent** (`access` / `permissions` on `defineAgent`,
@@ -89,10 +90,8 @@ export default defineSkill({
     When managing cases:
     - Always check for duplicate cases before creating a new one.
     - Set priority by customer tier: Enterprise → High, Pro → Medium, Free → Low.
-    - Escalated cases must summarise the actions already taken.
   `,
-  // Every name resolves: two platform tools (rung 2) plus one action tool
-  // materialised from this stack's own `crm_escalate_case` Action (rung 3).
+  // Two platform tools (rung 2) and this stack's own Action (rung 3).
   tools: ['query_records', 'get_record', 'action_crm_escalate_case'],
   triggerConditions: [
     { field: 'objectName', operator: 'eq', value: 'support_case' },
@@ -105,7 +104,7 @@ export default defineSkill({
 
 Each condition is `{ field, operator, value }`, ANDed with its siblings. The
 shape of `value` is **coupled to `operator`** — a mismatch is a parse error, not
-a coercion (`packages/spec/src/ai/skill.zod.ts:37-51, 139-202`):
+a coercion (`packages/spec/src/ai/skill.zod.ts:38-52, 140-203`):
 
 | Operator | Meaning | `value` must be |
 |:---------|:--------|:----------------|
@@ -171,31 +170,9 @@ decided entirely by the skip rule above — `actionSkipReason(action, ctx)` and
 `actionRequiresApproval(action)` (from `@objectstack/service-ai`) answer both
 questions, and Studio's "AI exposure" diagnostics use the same predicates.
 
-### The **Ask AI** button — `type: 'ask_ai'` ☁️
-
-Pins the assistant's conversation to the record the action runs on and opens
-it, sending no message. Declare it on the object, in
-`locations: ['record_header']` or `['record_more']`:
-
-<!-- os:check -->
-```typescript
-import { defineAction } from '@objectstack/spec';
-
-export default defineAction({
-  name: 'ask_about_contract',
-  label: 'Ask AI',
-  objectName: 'contract',
-  type: 'ask_ai',
-  locations: ['record_header'],
-});
-```
-
-It names nothing and is never a tool: the parse refuses a `target`,
-`ai.exposed: true`, and `actionType: 'ask_ai'` on a dashboard header (a header
-runs on no record). Nothing serves it headless: `list_actions` skips it,
-`run_action` refuses it, and no `action_` tool exists for it. The console draws
-it only where the assistant surface is on **and** the AI service honours a
-conversation focus; elsewhere it is absent, not disabled.
+**No page declares an AI button of its own**, so there is no action to write
+for one: the shell's 「问 AI」 entry opens the in-app assistant and carries the
+current record automatically.
 
 ---
 
@@ -249,68 +226,76 @@ these tools, a client advertising form-mode `elicitation` is asked instead:
 A context pack (`aiContexts`, `*.ai-context.ts`) lists the fields, related
 lists and body of one record that `get_record_context` hands a model, read as
 the caller; `requires: ['record-context']` serves the tool. Keys, bounds, pack
-names, `os validate` rules: [references/context-packs.md](./references/context-packs.md).
+names, a skill's `context` over MCP, `os validate` rules:
+[references/context-packs.md](./references/context-packs.md).
 
 ---
 
 ## Knowledge Sources (RAG)
 
-The RAG primitive is the **KnowledgeSource** (`KnowledgeSourceSchema` in
-`@objectstack/spec/ai`): declarative metadata pairing *what to index* with the id
-of an `IKnowledgeAdapter` that does the work. There is no `defineStack`
-collection for them — they are registered at runtime, and the ☁️
-`search_knowledge` tool exposes registered sources to agents.
+A RAG source is a **`knowledge_source`** metadata item (`KnowledgeSourceSchema`
+in `@objectstack/spec/ai`). Ship it in a package (`knowledgeSources`,
+`*.knowledge-source.ts` / `.yml`) or author it in Studio or over MCP;
+`KnowledgeServicePlugin({ sources })` and `registerSource` are a second door for
+the same schema. A source is identified by its package and `name`; the ☁️
+`search_knowledge` tool lists a package's source to agents as `NAMESPACE-NAME`
+(bare for one no package holds), and a code registration and an environment
+item of one name are one slot, the second refused. A shipped item mounts the
+knowledge service and its store; an app that ships none and authors sources at
+run time needs `requires: ['knowledge']`, or its items are never indexed.
 
-**Wiring (open packages).** `KnowledgeServicePlugin({ sources })` from
-`@objectstack/service-knowledge` registers `IKnowledgeService` with the kernel and
-each source at boot (`service.registerSource` still works later). The `adapter`
-id resolves against an adapter plugin — `@objectstack/knowledge-memory` (`'memory'`,
-dev/test), `@objectstack/knowledge-pgvector` (`'pgvector'`) or `@objectstack/knowledge-turso` (`'turso'`).
+**A source is an egress and cost decision.** Its first build sends every listed
+field of every matching record to the embedding provider and keeps the text (and
+the object's display field, as each title) in an index. A run-time save needs
+`manage_knowledge_sources` beside `manage_metadata`, and is refused, naming the
+object or field, when you may not search that object or query a field it reads.
 
-| Property | Purpose |
-|:---------|:--------|
-| `id` | Snake_case source id |
+| Key | Purpose |
+|:----|:--------|
+| `name` | Snake_case source name; with the package, its identity |
 | `label` / `description` | Display metadata |
-| `adapter` | Adapter id, resolved via `IKnowledgeService.registerAdapter` |
-| `adapterConfig` | Adapter-specific configuration (opaque to the service) |
-| `source` | What gets indexed — discriminated on `kind`: `'object'` \| `'file'` \| `'http'` |
-| `embedding` | Optional `EmbeddingModelSchema` ref (`provider`, `model`, `dimensions`) — adapters managing embeddings internally may ignore it |
-| `vectorStore` | Optional `VectorStoreSchema` ref (`provider`, `collection`) — same caveat |
-| `refresh` | `onRecordChange` (default `true` for object sources) + optional `cron` (for an external scheduler; not self-scheduled) |
-| `aiExposed` | May `search_knowledge` expose this source to agents (default `true`) — `false` indexes it without making it agent-searchable |
+| `adapter` | Optional store id (`pgvector`, `turso`, `memory`). Omitted: the deployment's store (`pgvector` on PostgreSQL, `turso` otherwise), else the only one registered; several and none the deployment's is refused, naming them |
+| `source.kind` | `'object'`, the one kind |
+| `source.object` | The object whose records are indexed |
+| `source.content` | Non-empty list of the fields whose text is indexed, in order. `'*'` is refused: embedding is egress, and a wildcard also sent fields added later. Meaningful text only, never ids or system fields; credential-class and `internal` fields are never indexed |
+| `source.metadataFields` | Fields kept for search-time filtering (`status`, `owner_id`, `tags`) |
+| `source.where` | ObjectQL `where`: keeps drafts and archived rows out |
+| `source.split` | How documents are cut into passages (below) |
+| `refresh.onRecordChange` | Sync from record events (default `true`); `false` leaves the index to an external indexer |
+| `aiExposed` | May `search_knowledge` expose it (default `true`) |
 
-| `source.kind` | Fields | Hygiene |
-|:--------------|:-------|:--------|
-| `object` | `object`, `contentFields[]` (min 1; `*` = every readable text field), `metadataFields?`, `where?` (ObjectQL `where` syntax), `split?` (below) | `where` keeps drafts and archived rows out of the index; `contentFields` takes meaningful text only (never system fields or ids, `*` sparingly); project what you will filter on at query time (`status`, `owner_id`, `tags`) into `metadataFields` |
-| `file` | `prefix` (storage prefix, e.g. `kb/handbooks/`), `mimeTypes?` | narrow the prefix instead of indexing a whole bucket |
-| `http` | `urls[]`, `userAgent?` | enumerate URLs explicitly — there is no crawler |
+Retired in 19, each refused with its fix: `id` (use `name`), `contentFields`
+(use `content`, listing the fields a `'*'` stood for), `embedding` (the
+deployment configures one embedder), `vectorStore` (the store is `adapter`),
+`adapterConfig` (an adapter takes plugin options), `refresh.cron` (call
+`reindexSource` from a flow or job), and `source.kind: 'file'` / `'http'` with
+`prefix`, `mimeTypes`, `urls`, `userAgent` (no form in 19). `os migrate meta
+--from 18` lists a stack's edits; edit a registration in code by hand.
 
 <!-- os:check -->
 ```typescript
 import { KnowledgeSourceSchema, type KnowledgeSource } from '@objectstack/spec/ai';
 
 export const supportKb: KnowledgeSource = KnowledgeSourceSchema.parse({
-  id: 'support_kb',
+  name: 'support_kb',
   label: 'Support Knowledge Base',
-  adapter: 'pgvector',
-  source: {
+  source: {                    // no adapter: the deployment's store
     kind: 'object',
     object: 'kb_article',
-    contentFields: ['title', 'body'],       // concatenated into document content
-    metadataFields: ['category', 'owner_id'], // projected for search-time filtering
-    where: { published: true },             // index published articles only
+    content: ['title', 'body'],
+    metadataFields: ['category', 'owner_id'],
+    where: { published: true },
   },
-  refresh: { onRecordChange: true },        // re-index on record.* events
 });
 ```
 
-**Splitting (`split`, object sources only).** The knowledge service cuts each
-document into passages for an adapter declaring `capabilities.chunks`
-(`memory`, `pgvector`, `turso`). Any other adapter receives whole documents;
-`split` has no effect on it. `split: { strategy, maxChars?, minChars? }`:
+**Splitting (`split`).** The knowledge service cuts each document into passages
+for a store declaring `capabilities.chunks`; any other store receives whole
+documents. `split: { strategy, maxChars?, minChars? }` — `strategy` is required
+once `split` is written; an omitted `split` means `recursive`:
 
-- `recursive` (default): cuts at blank lines, then line breaks, then sentence
-  ends. For prose.
+- `recursive`: cuts at blank lines, then line breaks, then sentence ends. For
+  prose.
 - `markdown`: one section per heading, each passage embedded with its heading
   path. For documents with headings.
 - `whole`: one passage per document. For short records only: a document over
@@ -327,8 +312,8 @@ Retired and refused: the `knowledge.chunk_overlap` setting (`400 UNKNOWN_KEY`;
 passages never overlap) and `KnowledgeChunk.metadata` (parse error; a passage
 takes its document's `metadata`).
 
-Top-K, score thresholds and rerankers are not source metadata: they belong to
-the adapter or application code.
+`topK` is a `search_knowledge` argument. Rerank and hybrid weighting are no
+source key, and no shipped store has a setting for either.
 
 ---
 
@@ -360,16 +345,17 @@ live, but listing-only: carried onto the tool, never sent to the model).
 
 ## Model Configuration
 
-Sampling parameters live under an agent's `model` (`AIModelConfigSchema`) —
-there is **no top-level `temperature` / `maxTokens`** on an agent
-(`packages/spec/src/ai/agent.zod.ts:36-40`):
+Sampling lives under an agent's `model` (`AIModelConfigSchema`), **never a
+top-level `temperature` / `maxTokens`** (`packages/spec/src/ai/agent.zod.ts:87-95`).
+The block names a model, never a provider: the deployment's AI settings choose
+the provider and resolve the model name among the providers turned on.
+`provider` is retired (protocol 19): writing it is a parse error. Delete it.
 
 | Key | Contract |
 |:--|:--|
-| `provider` | Inline enum `openai` \| `azure_openai` \| `anthropic` \| `local` (default `openai`). **Model-registry** entries (`ModelProviderSchema`) accept a wider set: also `google`, `cohere`, `huggingface`, `custom` |
-| `model` | Free string — the provider's own model name |
+| `model` | Optional free-string model name; absent = the host's default model for the environment |
 | `temperature` | `min(0).max(2)`, default `0.7`. **Outside 0–2 is a parse error** |
-| `maxTokens` / `topP` | Optional numbers, unbounded by the schema |
+| `maxTokens` / `topP` | Optional, schema-unbounded numbers |
 
 ---
 
@@ -393,8 +379,8 @@ there is **no top-level `temperature` / `maxTokens`** on an agent
    action, whose body writes elevated (`isSystem`), over a field a non-system
    write cannot set. `readonly: true` binds every non-system caller (the value
    is stripped, **objectstack-data** → `readonly`); a field permission without
-   `editable` (refused `403`) binds only a caller no held set grants it, and
-   Modify All grants it, so an admin's agent still writes the field. The body
+   `editable` (refused `403`) binds only a caller none of whose sets grants it
+   with an `editable: true` row; Modify All is no such grant. The body
    skips the caller's edit right: declare who may run the action in its
    `requiredPermissions` (ADR-0066). A declarative
    `operation: 'update'` action, and a `flow` action under `runAs: 'user'`,
@@ -444,22 +430,20 @@ name by that tool, a wildcard by any match, an `action_*` entry also by
 `run_action`. That covers the HTTP door and any host server that calls it; the
 plugin's own stdio transport lists every skill except one with
 `mcpPrompt: false`. That optional key is the owner's opt-out: `false` = written
-for the in-product agents only, never offered over MCP on any connection,
-whatever the binding; absent or `true` = the binding rule above. Bind a tool no
-MCP family serves (the MCP table above) and no filtering server offers the
-skill.
+for the in-product agents only, never offered over MCP on any connection;
+absent or `true` = the binding rule above.
 `visualize_data` is the only built-in that draws a chart (an inline `data-chart`
 part), auto-registered **only** when an analytics service (`IAnalyticsService`)
 is wired — `query_data` / `aggregate_data` return numbers, not charts.
 
-Two `AgentSchema` keys are **tombstones**, not legacy options — authoring either
-is a parse error carrying its migration
-(`packages/spec/src/ai/agent.zod.ts:234, :251`):
+Two `AgentSchema` keys are retired, not legacy options: the strict schema
+refuses each as an unknown key, naming
+https://objectstack.ai/docs/protocol-upgrade:
 
-| Retired key | REMOVED in protocol 17 — why, and what replaces it |
+| Retired key | Removed in 17, tombstone gone in 18 — why, and what replaces it |
 |:--|:--|
-| `agent.tools` | The inline slot resolved names against the *full* registry with no surface check. Not a rename: the migration deletes the key and names each tool that was listed; re-declare each in a skill (ADR-0064) |
-| `agent.knowledge` | Declaring sources/indexes on an agent never scoped retrieval — `search_knowledge` takes `sourceIds` from the model's tool-call arguments. Restrict at the knowledge-service / source level; describe intended grounding in `instructions` |
+| `agent.tools` | The inline slot resolved names against the *full* registry with no surface check. Not a rename: the strict schema refuses the key as unknown; re-declare each tool in a `defineSkill` under the stack's `skills` (ADR-0064) |
+| `agent.knowledge` | Declaring sources/indexes on an agent never scoped retrieval — `search_knowledge` takes `sourceIds` from the model's tool-call arguments. Restrict on the knowledge source (`aiExposed`, `source.where`); describe intended grounding in `instructions` |
 
 ---
 

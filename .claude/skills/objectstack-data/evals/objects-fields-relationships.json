@@ -206,15 +206,16 @@
     },
     {
       "id": 12,
-      "prompt": "项目上要显示「已完成任务数」「任务总数」和「完成率」。",
-      "expected_output": "Three fields on `project`: `completed_task_count` and `task_count` are `type: 'summary'` fields over the `task` child with `function: 'count'` (and `summaryOperations.object: 'task'`), the completed one carrying the qualifier in `filter: { status: 'completed' }` — keyed by a CHILD field and the option VALUE, never the label `已完成`; dropped, the field counts every task and shows a plausible wrong total. `completion_rate` is a `type: 'formula'` field over the two summaries, authored after them (it computes only once they do). If `project` rows already exist, says the recompute runs only on a child write, so the backfill is `os migrate summary-nulls --apply` — not editing a task to trigger it.",
+      "prompt": "项目上要显示「已完成任务数」「任务总数」和「完成率」。`task` 现在没有指向项目（`project`）的字段。",
+      "expected_output": "Three fields on `project`: `completed_task_count` and `task_count` are `type: 'summary'` fields over the `task` child with `function: 'count'` (and `summaryOperations.object: 'task'`), the completed one carrying the qualifier in `filter: { status: 'completed' }` — keyed by a CHILD field and the option VALUE, never the label `已完成`; dropped, the field counts every task and shows a plausible wrong total. `completion_rate` is a `type: 'formula'` field over the two summaries, authored after them (it computes only once they do). If `project` rows already exist, says the recompute runs only on a child write, so the backfill is `os migrate summary-nulls --apply` — not editing a task to trigger it. `task` gets a field pointing back at `project` (`master_detail` or `lookup`, `reference: 'project'`): a roll-up whose child has none is refused at publish (`rollup/child-without-parent-reference`).",
       "files": [],
       "assertions": {
         "must_contain": [
           "type: 'summary'",
           "function: 'count'",
           "filter:",
-          "type: 'formula'"
+          "type: 'formula'",
+          "reference: 'project'"
         ],
         "must_not_contain": [
           "filter: { status: '已完成' }",
@@ -274,7 +275,7 @@
     {
       "id": 16,
       "prompt": "Our `consent_change` audit log must show it if anyone edits, inserts or deletes rows directly in the database, but whatever proof is stored must not carry the consent text itself. How do I declare that?",
-      "expected_output": "Keep `lifecycle.class: 'audit'` with its bounding `retention` (or a `ttl` on `created_at`) and add `seal: { valueFields: ['consent_text'] }`: the audit plugin signs each `created_at` hour into one checkpoint per organization, chained to the one before, where `valueFields` columns enter as salted commitments and every other column in clear. The object declares its own `id` and a text or lookup `tenant_id` field; without that `tenant_id` (and with no `chainField` naming another chain column, such as the injected `organization_id`) it is refused at parse, and without `id` it parses but is not sealed, and the sealer reports it at `error` each hour. Refused at parse: `seal` on a class other than `audit`, `valueFields` naming `id`, `created_at` or an undeclared field, and beside `seal` a `retention` or `ttl` `onlyWhen`, a `ttl` on another field, or rotation `storage`. Two limits today: no verifier reads the checkpoints back yet, so a break is recorded but not reported; and until expiry ships, the sweeper still deletes sealed rows, which then read as missing. Field history is not tamper evidence.",
+      "expected_output": "Keep `lifecycle.class: 'audit'` with its bounding `retention` (or a `ttl` on `created_at`) and add `seal: { valueFields: ['consent_text'] }`: the audit plugin signs each `created_at` hour into one checkpoint per organization, chained to the one before, where `valueFields` columns enter as salted commitments and every other column in clear. The object declares its own `id` and a text or lookup `tenant_id` field; without that `tenant_id` (and with no `chainField` naming another chain column, such as the injected `organization_id`) it is refused at parse, and without `id` it parses but is not sealed, and the sealer reports it at `error` each hour. Refused at parse: `seal` on a class other than `audit`, `valueFields` naming `id`, `created_at` or an undeclared field, and beside `seal` a `retention` or `ttl` `onlyWhen`, a `ttl` on another field, or rotation `storage`. Signed expiry covers objects whose lifecycle is declared in packaged metadata, as this one is: its sealed rows leave only by whole checkpoints and read as `expired`. With no `archive`, a retention override below the declared window is rejected and the declared window applies; to keep rows for less time, shorten the declared window. On any other sealed object (one created at runtime) the sweeper still deletes sealed rows, which then read as missing. Field history is not tamper evidence.",
       "files": [],
       "assertions": {
         "must_contain": [
@@ -282,8 +283,7 @@
           "valueFields",
           "tenant_id",
           "salted commitments",
-          "read as missing",
-          "not reported"
+          "expired"
         ],
         "must_not_contain": [
           "trackHistory",
@@ -500,6 +500,20 @@
         "must_not_contain": [
           "deleteBehavior: 'cascade'"
         ]
+      }
+    },
+    {
+      "id": 29,
+      "prompt": "On `ticket` a colleague wrote `contact_name: { type: 'text', reference: 'contact' }` so the form offers a contact picker while the column stays text. Will that publish? Write the field as it should be.",
+      "expected_output": "No: only `lookup`, `master_detail`, `user` and `tree` read `reference`; on a `text` field publish refuses it (`field/reference-on-non-reference-type`). To link a contact the field is `{ type: 'lookup', reference: 'contact' }`; a plain text name drops `reference`.",
+      "files": [],
+      "assertions": {
+        "must_contain": [
+          "type: 'lookup'",
+          "reference: 'contact'",
+          "field/reference-on-non-reference-type"
+        ],
+        "must_not_contain": []
       }
     }
   ]

@@ -9,7 +9,7 @@ pnpm install
 pnpm build        # 产出 dist/objectstack.json
 ```
 
-企业版镜像的版本要与 `package.json` 里 `@objectstack/*` 的版本一致（当前 19.0.0-next.0）。
+企业版镜像的版本要与 `package.json` 里 `@objectstack/*` 的版本一致（当前 19.0.0-next.2）。
 
 ## 运行
 
@@ -23,7 +23,7 @@ pnpm build        # 产出 dist/objectstack.json
      -v "$PWD/dist:/srv/brightrule/dist:ro" \
      -e OS_COMPOSED_ARTIFACT_URL=file:///srv/brightrule/dist/objectstack.json \
      -e OS_CLOUD_URL=off \
-     ghcr.io/objectstack-ai/objectos-ee:19.0.0-next.0
+     ghcr.io/objectstack-ai/objectos-ee:19.0.0-next.2
    ```
 
    离线交付时用 `docker save` 打包企业版镜像，`dist/` 单独拷过去。明规更新时只需替换 `dist/` 并重启容器。

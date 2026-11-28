@@ -13,5 +13,5 @@ export const AskPolicyAction = defineAction({
   icon: 'message-circle-question',
   objectName: 'brightrule_policy',
   type: 'ask_ai',
-  locations: ['record_header', 'list_item'],
+  locations: ['record'],
 });

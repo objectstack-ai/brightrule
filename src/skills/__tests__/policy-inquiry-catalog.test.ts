@@ -41,6 +41,17 @@ describe('the policy-inquiry skill, on reading the catalog', () => {
   });
 });
 
+// The data tools hand each row a finished markdown link in `__link`
+// (cloud `record-links.ts`); a row without one (an MCP client) has no link to
+// copy, and a template around it came out as a literal 「(__link)」.
+describe('the policy-inquiry skill, on citing a policy', () => {
+  it('copies __link as the whole link, and falls back to display_name without one', () => {
+    expect(instructions).not.toContain('(__link)');
+    expect(instructions).toContain('它已是完整的 Markdown 链接');
+    expect(instructions).toContain('结果里没有 __link 时只写 display_name');
+  });
+});
+
 // The filter the skill teaches, run on the REAL engine (booted from source,
 // in-memory database, the sample seed) as an employee: the shape compiles, and
 // a 示例甲公司 employee's catalog holds the group's and 甲's policies and the

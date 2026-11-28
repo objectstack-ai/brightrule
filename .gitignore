@@ -8,3 +8,4 @@ dist
 
 # Local evaluation results (scripts/eval)
 scripts/eval/results/
+scripts/eval/generated/

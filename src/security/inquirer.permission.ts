@@ -13,19 +13,26 @@ import { SUGGESTION_TRIAGE_FIELDS } from './suggestion-fields.js';
  * write. No capability, so the 「AI 诊断」 action is hidden from and refused to
  * an employee.
  *
- * `allowRead` on policies is the object grant only; WHICH policies an employee
- * reads is decided by sharing, not here (docs/visibility.md principle 3). The
- * policy object is private, and a per-unit sharing rule opens a unit's
- * policies to the unit and every unit under it (brightrule#74, dimension 2;
- * the rules are written by scripts/sharing/policy-unit-sharing.mjs). So an
- * employee reads the policies of their own unit and of every unit above it,
- * and none of a sibling's; an employee in no unit reads none. Attachments
- * follow their policy (controlled_by_parent). Published-only is #70.
+ * An employee reads published policies only (brightrule#70, docs/visibility.md
+ * 维度 1): the row-level rule below hides drafts, policies under revision and
+ * abolished ones from every read — the policy library, the reading page, and
+ * the AI, which reads as the asker. 制度管理员 reads them all through an
+ * allow-all rule of its own, which OR-combines with this one
+ * (policy-admin.permission.ts).
+ *
+ * WHICH units' policies an employee reads is decided by sharing, not here
+ * (docs/visibility.md principle 3). The policy object is private, and a
+ * per-unit sharing rule opens a unit's policies to the unit and every unit
+ * under it (brightrule#74, dimension 2; the rules are written by
+ * scripts/sharing/policy-unit-sharing.mjs). So an employee reads the policies
+ * of their own unit and of every unit above it, and none of a sibling's; an
+ * employee in no unit reads none. Attachments follow their policy
+ * (controlled_by_parent), with no rule of their own.
  */
 export const InquirerPermissionSet = definePermissionSet({
   name: 'brightrule_inquirer',
   label: '问询人',
-  description: '员工默认权限：读制度和制度附件；提制度意见，只看自己的',
+  description: '员工默认权限：读已发布制度和它们的附件；提制度意见，只看自己的',
   isDefault: true,
   objects: {
     brightrule_policy: { allowRead: true },
@@ -45,4 +52,14 @@ export const InquirerPermissionSet = definePermissionSet({
     // 大类 is the intake hook's alone: it always derives it from 类别.
     'brightrule_policy_suggestion.category_group': { readable: true, editable: false },
   },
+  rowLevelSecurity: [
+    {
+      name: 'brightrule_inquirer_published_policies',
+      label: '只读已发布制度',
+      description: '员工只读已发布制度：草稿、修订中、已废止的制度及其附件都读不到（brightrule#70）',
+      object: 'brightrule_policy',
+      operation: 'select',
+      using: "status == 'published'",
+    },
+  ],
 });

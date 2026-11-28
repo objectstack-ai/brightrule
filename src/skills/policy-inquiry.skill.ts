@@ -16,6 +16,14 @@ import { defineSkill } from '@objectstack/spec';
  * model's. Both tools are in the `ask` agent's allow-set (cloud#4935) and are
  * served on every edition's MCP server.
  *
+ * A question that names no policy narrows the catalog to the asker's unit
+ * chain before choosing (brightrule#71): the platform states the chain with
+ * its `sys_business_unit` ids in the system prompt (cloud#5099), so the query
+ * asks for `owning_unit` in those ids, or empty. That is the search scope of
+ * an answer, not a permission: sibling companies' policies stay readable until
+ * the per-unit sharing rules land. No unit chain (an unassigned user, an MCP
+ * client): no unit condition, as before.
+ *
  * Phase one has no hand-off to a person (maintainer, 2026-11-24): with no
  * basis the answer says so; the escalation action stays for the form path.
  */
@@ -30,7 +38,7 @@ export const PolicyInquirySkill = defineSkill({
 
 ## 数据在哪里
 
-- 制度目录：对象 brightrule_policy。只看 status = "published" 的制度；读目录时只取字段 id、display_name、title、doc_no、category_group、category、policy_level、owning_unit、issuing_unit、department、summary、effective_date，不要带 body_md（正文很长，读正文时再取）。status 的取值：published 已发布（可据以作答）、draft 草稿（还未发布）、revising 修订中、abolished 已废止（不再有效，不据以作答）。display_name 是显示名称「所属单位：制度名称」：不同单位常有同名制度（如各公司都有差旅费管理办法），靠它分清是哪家单位的；结果里的 __link 是现成的制度链接，链接文字就是 display_name，提到这份制度时照抄。owning_unit 是所属单位（指向平台的单位，即 display_name 冒号前的那家单位），按单位取舍制度时以它为准。summary 是一两句话的目录摘要，可能为空，为空不代表没有正文。category_group 是制度大类：governance 治理类、operations 经营管理类、party 党工纪类；category 是其下的制度分类（小类）。policy_level 是制度层级：level_1 一级（公司基本管理制度）、level_2 二级（部门基本制度）、level_3 三级（配套管理细则），可能为空。
+- 制度目录：对象 brightrule_policy。只看 status = "published" 的制度；读目录时只取字段 id、display_name、title、doc_no、category_group、category、policy_level、owning_unit、summary，不要带 body_md（正文很长，读正文时再取）。status 的取值：published 已发布（可据以作答）、draft 草稿（还未发布）、revising 修订中、abolished 已废止（不再有效，不据以作答）。display_name 是显示名称「所属单位：制度名称」：不同单位常有同名制度（如各公司都有差旅费管理办法），靠它分清是哪家单位的；结果里的 __link 是现成的制度链接，链接文字就是 display_name，提到这份制度时照抄。owning_unit 是所属单位（指向平台的单位，即 display_name 冒号前的那家单位），按单位取舍制度时以它为准。summary 是一两句话的目录摘要，可能为空，为空不代表没有正文。category_group 是制度大类：governance 治理类、operations 经营管理类、party 党工纪类；category 是其下的制度分类（小类）。policy_level 是制度层级：level_1 一级（公司基本管理制度）、level_2 二级（部门基本制度）、level_3 三级（配套管理细则），可能为空。
 - 制度正文：就在制度记录上，字段 body_md（Markdown，已脱敏）。doc_no 是文号，引用出处时写在制度名之后。has_images = true 表示正文里有图片等内容（正文里只留「（图片）」等标记），你看不到；问题恰好涉及这些位置时，照实说明需查看原件。
 - 附件：对象 brightrule_policy_attachment（制度附件），挂在制度下（字段 policy）。label 是原文里的编号（附件1、附表2），title 是附件自己的名称，body_md 是附件全文（已脱敏，可能为空）。附件与正文一起读；只是待填写的空白表格的，不作答复依据，只告诉员工有这个表。
 - 不读 original_file（原件文件），也不调用 read_file：交给你的只能是脱敏正文。
@@ -49,7 +57,10 @@ export const PolicyInquirySkill = defineSkill({
    - 只给了名称：query_records 对象 brightrule_policy，条件 title 包含名称中的关键词（如 { "title": { "$contains": "职业生涯规划" } }），找到后再读正文；找到多份同名或相近的，按 display_name 列出来（看得出各属哪家单位）请员工确认。
    - 这份制度回答不了时，先说明「本制度中未找到相关规定」，再说明你另外查了哪份制度，引用时写清是哪份。
    - 员工问「这个制度讲了什么 / 最新内容是什么」：读正文后按章概括要点，列出章节和主要条款号，不要只复述目录字段。
-2. **没有指定制度**：读制度目录，每次查询都带条件 status = "published"。可以用 $contains 在 title、summary、body_md 上筛关键词，但 fields 里不带 body_md。目录可能超过 50 份，每页最多 50 条，按 offset 翻页直到读完。从目录里选出与问题最相关的 1–3 份（按名称、分类、摘要判断；员工说法与制度用词不同时按意思判断，如「打车」对应交通、网约车，「带薪假」对应年休假，「升职、职级」对应职业生涯、专业职级），再逐份读正文。
+2. **没有指定制度**：query_records 查制度目录，先缩小范围再挑，不要逐页读完整个目录。每次都带 status = "published"，limit 200，再加：
+   - 单位：系统提示的「主单位链」列出了单位 id 时，只查链上单位（本公司及上级）和没填所属单位的制度：{ "$or": [{ "owning_unit": { "$in": [链上全部 id] } }, { "owning_unit": { "$null": true } }] }。员工明确问另一家单位时，改为 display_name 包含那家单位的名称。没有单位链（未分配单位、系统提示里没有提问人）时不加单位条件。
+   - 关键词：用 $contains 在 title、summary、body_md 上筛，fields 不带 body_md。与单位条件同用时都放进 $and：{ "status": "published", "$and": [单位条件, { "$or": [关键词条件] }] }。
+   命中太多换更具体的关键词，没有命中换说法再查。选出与问题最相关的 1–3 份（按名称、分类、摘要判断；员工说法与制度用词不同时按意思判断，如「打车」对应交通、网约车，「带薪假」对应年休假，「升职、职级」对应职业生涯、专业职级），再逐份读正文。
 3. 读正文时注意附则、例外条款，以及「按《某制度》执行」这类引用：引用的是另一份制度时，必要时按第 1 步的方法把它也读出来。
 
 ## 按提问人的所属单位作答
@@ -75,7 +86,7 @@ export const PolicyInquirySkill = defineSkill({
 - 答复固定分三段，每段以加粗小标题开头，顺序不变：
   - **结论**：第一句直接回答。能用「能 / 不能 / 多少 / 谁审批」回答的，就这样回答；有条件的，把条件写全。
   - **依据**：逐条摘录支撑结论的原文（引号括起，可节选），每条前写条号。需要计算时在这里写出算式。
-  - **出处**：每条依据一行，写成 [display_name](__link) 文号 第X条。制度链接照抄查询结果里的 __link，链接文字是 display_name；文号用 doc_no，没有文号就省略。依据在附件里的，再写附件的 label 和 title，如 附表1《本集团内训师申报表》。多条相关就都列出。
+  - **出处**：每条依据一行，写成「制度链接 文号 第X条」。制度链接照抄结果里的 __link（它已是完整的 Markdown 链接）；结果里没有 __link 时只写 display_name，不要写出「__link」字样；文号用 doc_no，没有文号就省略。依据在附件里的，再写附件的 label 和 title，如 附表1《本集团内训师申报表》。多条相关就都列出。
 - 找不到依据、跨制度比对等下文另有格式要求的情形，按下文的要求写，不硬套三段。
 - 只用读到的正文作答。答复中的每个数字、金额、天数、条件都必须能在被引条文中找到；需要计算时写出算式。
 - 不凭常识或记忆补充制度没写的内容，不提供法律意见。

@@ -122,7 +122,7 @@ describe('制度管理员 and 问询人 on the engine', () => {
       { policy: draft.id, finding: '临时制度的意见。' },
       { as: officer },
     )) as Row;
-    await stack.hooks.run('brightrule_policy', 'delete', { id: draft.id }, { as: devAdmin });
+    await stack.hooks.run('brightrule_policy', 'delete', { id: draft.id }, { as: officer });
     const [kept] = (await stack.rows(SUGGESTION, { id: created.id })) as Row[];
     expect(kept).toBeTruthy();
     expect(kept.policy ?? null).toBeNull();

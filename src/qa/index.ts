@@ -2,6 +2,7 @@ import { PolicyParentHook } from './policy-parent.hook.js';
 import { PolicyTrialHook } from './policy-trial.hook.js';
 import { PolicyCategoryGroupHook } from './policy-category-group.hook.js';
 import { PolicySuggestionIntakeHook } from './policy-suggestion-intake.hook.js';
+import { PolicyClauseSyncHook, PolicyAttachmentClauseSyncHook } from './policy-clause.hook.js';
 
 /**
  * Lifecycle hooks of the policy object: refuse a policy that names itself as
@@ -12,4 +13,4 @@ import { PolicySuggestionIntakeHook } from './policy-suggestion-intake.hook.js';
  * service and the form-inquiry hooks are gone; employees ask in the AI chat,
  * which reads the policy body itself — src/skills/policy-inquiry.skill.ts).
  */
-export const policyHooks = [PolicyParentHook, PolicyTrialHook, PolicyCategoryGroupHook, PolicySuggestionIntakeHook];
+export const policyHooks = [PolicyParentHook, PolicyTrialHook, PolicyCategoryGroupHook, PolicySuggestionIntakeHook, PolicyClauseSyncHook, PolicyAttachmentClauseSyncHook];

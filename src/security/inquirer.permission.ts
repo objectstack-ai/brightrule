@@ -37,6 +37,7 @@ export const InquirerPermissionSet = definePermissionSet({
   objects: {
     brightrule_policy: { allowRead: true },
     brightrule_policy_attachment: { allowRead: true },
+    brightrule_policy_clause: { allowRead: true },
     brightrule_policy_suggestion: { allowCreate: true, allowRead: true, allowEdit: true },
     // The business units a policy belongs to (`owning_unit`, brightrule#52):
     // read only, so the unit's name shows on the policy. The units themselves

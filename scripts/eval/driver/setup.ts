@@ -268,6 +268,23 @@ export async function setupEnvironment(corpus: Corpus, o: SetupOptions): Promise
 /** The environment's policies, as the resolver the trajectory mapping needs. */
 export async function policyIds(s: Session, corpus: Corpus): Promise<{ byId: Map<string, string>; idOfKey: Map<string, string>; missing: string[] }> {
   const keys = new Set(corpus.policies.map((p) => p.key));
+  // A real-data run keys policies by record id: policy_no is often empty or
+  // repeated there. EVAL_ID_KEY_MAP names a JSON file of { record id: corpus key };
+  // every copy of the same text may map to its group's key, and the key's own
+  // record id is the hex of the key after its `R-` prefix.
+  const mapFile = process.env.EVAL_ID_KEY_MAP;
+  if (mapFile) {
+    const fs = await import('node:fs');
+    const m = JSON.parse(fs.readFileSync(mapFile, 'utf8')) as Record<string, string>;
+    const byId = new Map<string, string>();
+    const idOfKey = new Map<string, string>();
+    for (const [id, key] of Object.entries(m)) {
+      if (!keys.has(key)) continue;
+      byId.set(id, key);
+      idOfKey.set(key, Buffer.from(key.slice(2), 'hex').toString('utf8'));
+    }
+    return { byId, idOfKey, missing: [...keys].filter((k) => !idOfKey.has(k)) };
+  }
   const rows = await listAll(s, 'brightrule_policy', ['id', 'policy_no']);
   const byId = new Map<string, string>();
   const idOfKey = new Map<string, string>();

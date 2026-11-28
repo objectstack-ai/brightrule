@@ -15,7 +15,7 @@
 | `build.ts` | 生成语料和题集文件 |
 | `drive.ts` / `driver/` | 驱动：把语料装进环境、以 persona 账号经 ask 对话路由提问、写运行记录 |
 | `grade.ts` | 对运行记录评分、出报告 |
-| `mcp-eval.mjs` / `questions.json` | 旧的 MCP 评测（客户自带模型经 MCP 的路径），保留 |
+| `mcp-eval.mjs` / `questions.json` | 旧的 MCP 评测（13 题、关键词判分），留作 2026-11-23 评测记录的复现脚本；新题集经 MCP 用 `drive.ts run --via mcp` |
 | `generated/`、`results/` | 生成物和结果，已被 git 忽略 |
 
 ## 合成语料
@@ -57,7 +57,7 @@ pnpm run eval:build -- --seed 7 --out /tmp/eval-set
 
 **偏差来源（要记在报告里）**：所有题都是为本题集编写的（`source: written`），口语改写题不是线上真实问法——仓库里没有真实提问。真实问法的题集接进来之前，口语改写题的分数偏乐观。
 
-**权限题**：brightrule#70（已发布行级规则）落地之前，员工能读到全部制度，包括草稿、已废止、平级和限定范围的。所以权限题现在只测「模型是否听话」，报告里单独列，不算进总分、不当零容忍门槛。
+**权限题**：brightrule#70 已经落地，员工只读得到已发布制度，草稿、已废止两类权限题由平台挡住。平级和限定范围的制度员工仍然读得到（按单位隔离还没做），这两类只测「模型是否听话」。权限题报告里单独列，不算进总分、不当零容忍门槛。
 
 ### 标注怎么保证不错
 
@@ -75,7 +75,9 @@ pnpm run eval:build -- --seed 7 --out /tmp/eval-set
 
 驱动走员工用的 ask 对话路由：每题以对应 persona 的账号**登录**提问。平台只给登录会话注入「提问人」块（所属公司、单位链，cloud#5099），API key 和 MCP 都拿不到，所以不能用 API key 跑。
 
-前提：一个已经在运行、装好 BrightRule、专门用来评测的环境（本地企业版栈或云上环境），和它的管理员账号（用环境变量 `EVAL_ADMIN_EMAIL` / `EVAL_ADMIN_PASSWORD` 传入，`setup` 必需，`run` 用它换算记录 id、读 token）。密码只从环境变量读，不写进文件。
+驱动有两条路线：默认走 ask 对话（企业版、云上）；`--via mcp` 走 MCP（社区版也能跑，见下文「社区版：经 MCP」）。
+
+前提：一个已经在运行、装好 BrightRule、专门用来评测的环境（本地企业版栈、社区版或云上环境），和它的管理员账号（用环境变量 `EVAL_ADMIN_EMAIL` / `EVAL_ADMIN_PASSWORD` 传入，`setup` 必需，`run` 用它换算记录 id、读 token）。密码只从环境变量读，不写进文件。
 
 ```bash
 pnpm run eval:build -- --distractors 1500       # 先生成语料和题集
@@ -96,6 +98,7 @@ pnpm run eval:drive -- run --base https://ENV --reps 3 --concurrency 4 --tokens 
 - 所属单位写 `sys_business_unit_member`（`is_primary`），这是平台算提问人单位的来源；没有单位的 persona 会删掉它的成员关系；
 - 给每个 persona 授予「问询人」权限集（`brightrule_inquirer`，可用 `--permission-set` 换）。应用把它设成默认、启动时绑给所有人，但在运行中的环境里装应用，要到下次启动才绑上；没有它，persona 一份制度也读不到，模型只会答「没有权限」；
 - 给每个 persona 分 AI 席位（没有席位的环境跳过，记警告）；
+- 先给 `setup` 登录的管理员授予「制度管理员」权限集（`brightrule_policy_admin`，可用 `--admin-permission-set` 换），再读写制度。brightrule#70 之后只有这个权限集读得到草稿和已废止制度，管理员没有它，重跑时会找不到这些制度、重复新建，挂在上面的链接和附件也会 404。`run` 用同一个管理员换算记录 id，所以要先跑过 `setup`；
 - 制度按 `policy_no`（= 语料 `key`），再补「上级制度」链接，附件按（制度，序号）。试行和制度大类留给应用的钩子推导。
 
 环境里语料没有的制度不会删，会留在目录里当干扰项，所以要用专门的评测环境。
@@ -124,6 +127,29 @@ pnpm run eval:drive -- run --base https://ENV --reps 3 --concurrency 4 --tokens 
 - 第一次答复是反问时，按题目的 `clarify_reply`（没有就用 persona 的自我介绍）自动回答一次，评第二次答复；再反问不再回答；
 - 记录 id 按 `policy_no` 换回语料 key；`search_knowledge` 的命中记为检索结果（向量 / 混合路线）。不经模型的纯检索分要等平台检索 API（objectstack#37306）。
 
+### 社区版：经 MCP（`--via mcp`）
+
+社区版（开源框架）没有 ask 对话服务，能测的是 MCP 路线：客户自带模型（任何兼容 OpenAI 的接口），经部署的 MCP 服务器（`/api/v1/mcp`）提问，和外部 MCP 客户端一样。
+
+```bash
+pnpm dev                                          # 本地社区版，默认 http://localhost:3000，管理员 admin@objectos.ai / admin123
+export EVAL_ADMIN_EMAIL=admin@objectos.ai EVAL_ADMIN_PASSWORD=admin123 EVAL_PERSONA_PASSWORD=…
+pnpm run eval:drive -- setup --base http://localhost:3000   # 同一个 setup；社区版没有 AI 席位，每个账号记一条警告，不影响
+
+export LLM_BASE_URL=https://ai-gateway.vercel.sh/v1 LLM_API_KEY=… LLM_MODEL=anthropic/claude-haiku-5.5
+pnpm run eval:drive -- run --via mcp --base http://localhost:3000 --limit 10 --grade
+```
+
+和 ask 路线的区别（报告里要单独看，不和 ask 路线的分数直接比）：
+
+- **没有提问人块**：MCP 拿不到所属公司和单位链（cloud#5099 只给 ask 路线的登录会话），模型不知道提问人在哪家公司。单位口径题、反问题、职级题天生吃亏：冒烟里集团员工问住宿标准，模型也先反问「您在哪家公司」。
+- **系统提示**：服务器的 `initialize` 说明；`--arm prompt`（默认）再加经 `prompts/get` 取的制度问询技能，`--arm plain` 不加。
+- **指定制度题**：MCP 没有 `context.focus`，驱动把「已钉住这份制度、记录 id」写进系统提示，像一个知道当前页面的 MCP 客户端。
+- **不写数据**：写记录、执行动作、存草稿的工具一律答拒绝（`--execute-writes` 放行）。
+- **token**：直接取模型接口返回的 usage，只算评分的那几轮（不含多轮题的前置轮），不需要 `--tokens`。
+- 每轮最多调 20 次模型（`--max-steps`），到上限仍没有答复记为出错；工具结果给模型看前 6 万字。
+- 配置名默认 `mcp/模型/arm`，同一份结果文件里可以和 ask 路线的记录并排出报告。
+
 ### 耗时和用量
 
 2026-11-28 在本地企业版栈上冒烟（BrightRule 0.1.0，语料 77 份核心 + 1,500 份干扰，目录路线，环境默认模型，各 1 轮）：
@@ -135,7 +161,11 @@ pnpm run eval:drive -- run --base https://ENV --reps 3 --concurrency 4 --tokens 
 | zh-direct-01 直接事实 | 12 秒，4 次，约 15.3 万 token |
 | zh-clarify-01 反问（自动回答一轮） | 103 秒，16 次，约 55.2 万 token：没有单位时模型按名称拉出几十份同名制度的正文 |
 
-三题规则分都是 2/2，反问被识别并自动回答。按这个量级粗估（未实测）：全量 321 题一轮约 0.6–1 亿输入 token（目录路线上多数是缓存读），并发 4 约半小时到一小时。先用 `--limit` 或 `--type` 小批试跑，看清单价再上全量和多轮。
+三题规则分都是 2/2，反问被识别并自动回答。
+
+按这个量级粗估（未实测）：全量 321 题一轮约 0.6–1 亿输入 token（目录路线上多数是缓存读），并发 4 约半小时到一小时。先用 `--limit` 或 `--type` 小批试跑，看清单价再上全量和多轮。
+
+社区版经 MCP（2026-11-28，BrightRule `pnpm dev`，同一份语料，Haiku 经网关，`--arm prompt`）：`setup` 181 秒；zh-direct-01 23 秒、8 次工具调用、约 18.2 万输入 token，先反问单位、自动回答后答对；zh-clarify-01 19 秒、8 次、约 17.2 万，反问后答对。两题规则分都是 2/2。
 
 ## 评分
 

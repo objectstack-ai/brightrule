@@ -15,6 +15,8 @@ export interface Turn {
   text: string;
   toolCalls: TurnToolCall[];
   error?: string;
+  /** Model tokens of the turn, when the route reports them (the MCP route reads the model's usage; the ask route's come from ai_traces). */
+  usage?: { input: number; output: number };
 }
 
 export interface ChatMessage {

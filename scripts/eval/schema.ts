@@ -239,7 +239,7 @@ export const RunRecord = z.object({
   latency_ms: z.number(),
   /** The conversation on the environment, to look the run up there (traces, transcript). */
   conversation_id: z.string().optional(),
-  /** Summed over the conversation's model calls (context turns included), when the driver could read the traces. */
+  /** Model tokens: on the ask route summed from the conversation's traces (context turns included, `--tokens`); on the MCP route the model's own usage over the graded turns. */
   input_tokens: z.number().optional(),
   output_tokens: z.number().optional(),
   error: z.string().optional(),

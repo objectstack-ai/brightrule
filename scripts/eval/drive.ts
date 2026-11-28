@@ -4,11 +4,17 @@
  * environment, then ask the questions as their persona accounts and write run
  * records for grade.ts.
  *
- *   npx tsx scripts/eval/drive.ts setup --base URL [--corpus FILE] [--concurrency 8] [--permission-set NAME] [--skip-policies]
+ *   npx tsx scripts/eval/drive.ts setup --base URL [--corpus FILE] [--concurrency 8] [--permission-set NAME] [--admin-permission-set NAME] [--skip-policies]
  *   npx tsx scripts/eval/drive.ts run   --base URL [--questions FILE] [--corpus FILE]
  *        [--only ID,ID] [--type TYPE,TYPE] [--limit N] [--reps 3] [--concurrency 4]
  *        [--route catalog|vector|hybrid] [--model ID] [--config NAME] [--app PACKAGE]
  *        [--out FILE] [--resume] [--raw DIR] [--tokens] [--grade]
+ *        [--via ask|mcp] [--arm prompt|plain] [--max-steps 20] [--execute-writes]
+ *
+ * `--via mcp` asks through the deployment's MCP server with a model of your own
+ * (any OpenAI-compatible chat API: LLM_BASE_URL, LLM_API_KEY, LLM_MODEL), the
+ * route the community edition serves. The ask route (the default) needs the
+ * enterprise edition or the cloud. See driver/mcp.ts for what differs.
  *
  * Environment variables:
  *   EVAL_PERSONA_PASSWORD   the password of every persona account (setup sets it; run signs in with it)
@@ -28,6 +34,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { askQuestion, type PersonaChat } from './driver/ask.js';
 import { chatTurn, newConversation } from './driver/chat.js';
+import { mcpPersonaChat, type LlmConfig } from './driver/mcp.js';
 import { listAll, pool, signIn, type Session } from './driver/http.js';
 import { policyIds, setupEnvironment } from './driver/setup.js';
 import { Corpus, QuestionSet, RunRecord, type Question } from './schema.js';
@@ -58,7 +65,7 @@ const concurrency = Number(flag('--concurrency', command === 'setup' ? '8' : '4'
 if (command === 'setup') {
   if (!admin) throw new Error('setup needs an administrator: set EVAL_ADMIN_EMAIL and EVAL_ADMIN_PASSWORD');
   const t0 = Date.now();
-  const r = await setupEnvironment(corpus, { baseUrl: base, admin, password: personaPassword, concurrency, permissionSet: flag('--permission-set'), skipPolicies: has('--skip-policies'), log });
+  const r = await setupEnvironment(corpus, { baseUrl: base, admin, password: personaPassword, concurrency, permissionSet: flag('--permission-set'), adminPermissionSet: flag('--admin-permission-set'), skipPolicies: has('--skip-policies'), log });
   log(`setup done in ${Math.round((Date.now() - t0) / 1000)} s: ${JSON.stringify({ ...r, warnings: r.warnings.length })}`);
   for (const w of r.warnings) log(`warning: ${w}`);
   process.exit(0);
@@ -74,10 +81,20 @@ if (limit) questions = questions.slice(0, Number(limit));
 if (questions.length === 0) throw new Error('no question matches --only / --type');
 
 const reps = Number(flag('--reps', '1'));
+const via = flag('--via', 'ask')!;
+if (via !== 'ask' && via !== 'mcp') throw new Error(`--via is ask or mcp, not ${via}`);
 const route = flag('--route', 'catalog')!;
 if (!['catalog', 'vector', 'hybrid'].includes(route)) throw new Error(`--route is catalog, vector or hybrid, not ${route}`);
-const model = flag('--model');
-const config = flag('--config', `${route}/${model ?? 'env-default'}`)!;
+const arm = flag('--arm', 'prompt')!;
+if (arm !== 'prompt' && arm !== 'plain') throw new Error(`--arm is prompt or plain, not ${arm}`);
+let llm: LlmConfig | undefined;
+if (via === 'mcp') {
+  const { LLM_BASE_URL, LLM_API_KEY, LLM_MODEL } = process.env;
+  if (!LLM_BASE_URL || !LLM_API_KEY || !LLM_MODEL) throw new Error('--via mcp needs LLM_BASE_URL, LLM_API_KEY and LLM_MODEL (any OpenAI-compatible chat API)');
+  llm = { baseUrl: LLM_BASE_URL.replace(/\/+$/, ''), apiKey: LLM_API_KEY, model: LLM_MODEL, maxSteps: Number(flag('--max-steps', '20')), toolOutputLimit: 60_000 };
+}
+const model = via === 'mcp' ? llm!.model : flag('--model');
+const config = flag('--config', via === 'mcp' ? `mcp/${model}/${arm}` : `${route}/${model ?? 'env-default'}`)!;
 const app = flag('--app', 'ai.objectstack.brightrule')!;
 const out = path.resolve(flag('--out', path.join(HERE, 'results', `run-${new Date().toISOString().replace(/[:.]/g, '-')}.jsonl`))!);
 fs.mkdirSync(path.dirname(out), { recursive: true });
@@ -115,10 +132,18 @@ if (has('--resume') && fs.existsSync(out)) {
   log(`resuming: ${done.size} records already in ${out}`);
 }
 
-const chatOf = (s: Session): PersonaChat => ({
-  newConversation: () => newConversation(s),
-  turn: (conversationId, messages, context) => chatTurn(s, conversationId, messages, { context, model }),
-});
+const chats = new Map<string, PersonaChat>();
+const chatOf = (personaId: string): PersonaChat => {
+  let c = chats.get(personaId);
+  if (!c) {
+    const s = sessions.get(personaId)!;
+    c = llm
+      ? mcpPersonaChat(s, llm, { arm: arm as 'prompt' | 'plain', executeWrites: has('--execute-writes') })
+      : { newConversation: () => newConversation(s), turn: (conversationId, messages, context) => chatTurn(s, conversationId, messages, { context, model }) };
+    chats.set(personaId, c);
+  }
+  return c;
+};
 const jobs = Array.from({ length: reps }, (_, i) => questions.map((q) => ({ q, rep: i + 1 })))
   .flat()
   .filter((j) => !done.has(`${j.q.id}#${j.rep}#${config}`));
@@ -129,7 +154,7 @@ const t0 = Date.now();
 await pool(jobs, concurrency, async ({ q, rep }) => {
   const { record, turns } = await askQuestion(q, {
     persona: personas.get(q.persona)!,
-    chat: chatOf(sessions.get(q.persona)!),
+    chat: chatOf(q.persona),
     resolver,
     idOfKey,
     baseContext: { activeApp: app, packageId: app },
@@ -144,7 +169,8 @@ await pool(jobs, concurrency, async ({ q, rep }) => {
 });
 log(`asked in ${Math.round((Date.now() - t0) / 1000)} s → ${out}`);
 
-if (has('--tokens')) {
+if (has('--tokens') && via === 'mcp') log('--tokens: the MCP route records the model\'s own usage already; nothing to read');
+else if (has('--tokens')) {
   if (!admin) log('--tokens needs an administrator (EVAL_ADMIN_EMAIL / EVAL_ADMIN_PASSWORD); skipped');
   else {
     const traces = await listAll(admin, 'ai_traces', ['conversation_id', 'prompt_tokens', 'completion_tokens']).catch((e: Error) => {

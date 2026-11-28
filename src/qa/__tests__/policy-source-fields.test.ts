@@ -14,6 +14,13 @@ describe("a policy's source fields on the engine", () => {
   beforeAll(async () => {
     stack = await bootStack(config);
     as = await stack.signIn();
+    // A new policy is a draft, which only 制度管理员 reads (brightrule#70): the
+    // platform's own admin holds 问询人 like everyone, so grant it the set.
+    const grant = await stack.apiAs(as, 'POST', '/data/sys_user_permission_set', {
+      user_id: (await stack.contextFor(as)).userId,
+      permission_set: 'brightrule_policy_admin',
+    });
+    expect(grant.status).toBe(201);
   });
 
   afterAll(async () => {

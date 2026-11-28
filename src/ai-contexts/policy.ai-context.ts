@@ -25,7 +25,11 @@ export const PolicyAiContext: AiContext = {
     'is_trial',
     'issued_date',
     'effective_date',
+    // 制度之间的关系：转发、参照执行的制度没写所问事项时读上级制度，
+    // 正文点名的制度先在相关制度里找（policy-inquiry.skill.ts 第 3 步）。
+    'issuance_type',
     'parent_policy',
+    'related_policies',
   ],
   related: [
     {

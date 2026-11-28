@@ -237,6 +237,9 @@ export const RunRecord = z.object({
   clarified: z.boolean(),
   tool_calls: z.array(ToolCall),
   latency_ms: z.number(),
+  /** The conversation on the environment, to look the run up there (traces, transcript). */
+  conversation_id: z.string().optional(),
+  /** Summed over the conversation's model calls (context turns included), when the driver could read the traces. */
   input_tokens: z.number().optional(),
   output_tokens: z.number().optional(),
   error: z.string().optional(),

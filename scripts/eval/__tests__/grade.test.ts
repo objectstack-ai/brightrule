@@ -100,6 +100,10 @@ describe('leaks, refusals, clarifying questions, language', () => {
     expect(looksLikeClarifyingQuestion('集团规定 600 元，甲公司 500 元。请问您在哪家公司？告诉我后按贵公司的规定答复。')).toBe(true);
     expect(looksLikeClarifyingQuestion('Staff get 14 days and managers 18. Which grade are you?')).toBe(true);
     expect(looksLikeClarifyingQuestion('一线城市每晚不超过 600 元。以正式发布的制度文本为准。')).toBe(false);
+    // Seen on the first smoke run: the ask sits in the conclusion and has no question mark.
+    expect(looksLikeClarifyingQuestion('**结论** 集团每晚 600 元，甲公司 500 元。请告诉我您所在的公司和职级，我按贵公司的规定答复。\n\n**依据** 第五条……\n\n以正式发布的制度文本为准。')).toBe(true);
+    expect(looksLikeClarifyingQuestion('Group staff get 18 days. Please let me know which company you work for and I will check its handbook.')).toBe(true);
+    expect(looksLikeClarifyingQuestion('如有其他问题，请告诉我。以正式发布的制度文本为准。')).toBe(false);
   });
 
   it('detects the answer language, Chinese policy titles in an English answer notwithstanding', () => {
@@ -156,6 +160,23 @@ describe('grading one record', () => {
     const made = gradeRecord(q, rec(q.id, '**结论** 婚假 3 天。'), idx);
     expect(made.ruleScore).toBe(0);
     expect(made.fabricated).toBe(true);
+  });
+
+  it('checks quotes against what the trajectory saw, not the expected policies', () => {
+    const q = Q('zh-direct-01');
+    const answer = '每晚不超过 600 元。依据：「一线城市（北京、上海、广州、深圳）住宿标准为每晚不超过 600 元」';
+    const unread = gradeRecord(q, rec(q.id, answer), idx);
+    expect(unread.quotes.verified).toBe(0);
+    expect(unread.fabricated).toBe(true);
+    const retrieved = gradeRecord(q, rec(q.id, answer, { retrieval: [{ policy: 'FIN-001', article: '第五条' }] }), idx);
+    expect(retrieved.quotes.verified).toBe(1);
+  });
+
+  it('does not count a no-basis question answered with a question as fabricated', () => {
+    const q = Q('zh-nobasis-01');
+    const r = gradeRecord(q, rec(q.id, '请问您是哪家公司的？告诉我后我按贵公司的制度查。'), idx);
+    expect(r.ruleScore).toBe(0);
+    expect(r.fabricated).toBe(false);
   });
 
   it('flags a made-up quote as fabricated and scores partial key values 1', () => {

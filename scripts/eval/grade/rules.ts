@@ -190,8 +190,16 @@ export function looksLikeRefusal(answer: string): boolean {
   return REFUSAL_ZH.test(answer) || REFUSAL_EN.test(answer);
 }
 
+/**
+ * A request for the asker's unit or rank anywhere in the reply, question mark
+ * or not: 「请告诉我您所在的公司和职级，我按贵公司的规定答复。」 often sits in the
+ * conclusion, ahead of the basis and the sources.
+ */
+const ASKS_FOR_UNIT_OR_RANK = /请(?:告诉我|告知|说明|提供|确认|补充)[^。！!\n]{0,24}(?:公司|单位|部门|职级|岗位|级别|职务)|(?:please|could you) (?:tell me|let me know|confirm)[^.!\n]{0,40}\b(?:company|entity|unit|grade|level|rank|role)\b/i;
+
 /** Whether a reply asks the asker something back (unit, rank, …) and waits for it. */
 export function looksLikeClarifyingQuestion(reply: string): boolean {
+  if (ASKS_FOR_UNIT_OR_RANK.test(reply)) return true;
   const tail = reply.trim().slice(-160);
   if (!/[？?]/.test(tail)) return false;
   return /请问|请告诉|告诉我|您在哪|您是|哪家|哪个单位|哪一?档|职级|岗位|多大|哪一年|合同期限|which|what (?:is your|grade|company)|are you|could you (?:tell|confirm|let)|let me know|please (?:tell|confirm)/i.test(tail);
@@ -255,7 +263,7 @@ export interface RuleResult {
   location: Location | null;
   retrieval5: number | null;
   retrieval10: number | null;
-  /** A no-basis question answered anyway, or a quote in the policy's language that is not in any read policy. */
+  /** A no-basis question answered anyway (not refused, not asked back), or a quote in the policy's language that is not in any policy the trajectory saw. */
   fabricated: boolean;
   /** 2 / 1 / 0 from rules alone; null when the question has no rule-checkable value (the judge decides). */
   ruleScore: 0 | 1 | 2 | null;
@@ -271,8 +279,15 @@ export function gradeRecord(q: Question, rec: RunRecord, idx: CorpusIndex): Rule
     return p ? citesPolicy(answer, p, idx.unitName(p.unit), idx.titleIsUnique(p.title)) : false;
   }).length;
 
-  // Quotes are checked against what the trajectory read, the pinned policy and the expected policies.
-  const readKeys = new Set([...rec.tool_calls.flatMap((t) => t.read_policies), ...(q.pinned_policy ? [q.pinned_policy] : []), ...q.expected_policies]);
+  // Quotes are checked against what the trajectory saw: the policies it read,
+  // the retrieval hits' policies (vector / hybrid routes) and the pinned
+  // policy, whose pack the platform reads before the first round. Not the
+  // expected policies: a right quote from a policy never read is not verifiable.
+  const readKeys = new Set([
+    ...rec.tool_calls.flatMap((t) => t.read_policies),
+    ...(rec.retrieval ?? []).map((r) => r.policy),
+    ...(q.pinned_policy ? [q.pinned_policy] : []),
+  ]);
   const sources = [...readKeys].flatMap((k) => {
     const p = idx.policy(k);
     return p ? policyTexts(p) : [];
@@ -296,7 +311,10 @@ export function gradeRecord(q: Question, rec: RunRecord, idx: CorpusIndex): Rule
   };
   const leaks = q.forbidden.filter((f) => forbiddenFires(answer, f, policyOf)).map((f) => f.why);
   const refused = looksLikeRefusal(answer);
-  const fabricated = (q.expect_no_basis && !refused) || verified < checkable.length;
+  // A no-basis question answered with (another) question is not refused, so it
+  // scores 0, but it states nothing either: it is not counted as fabricated.
+  const answeredAnyway = q.expect_no_basis && !refused && !looksLikeClarifyingQuestion(answer);
+  const fabricated = answeredAnyway || verified < checkable.length;
 
   let ruleScore: RuleResult['ruleScore'] = null;
   if (leaks.length > 0) ruleScore = 0;

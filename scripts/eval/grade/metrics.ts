@@ -133,7 +133,7 @@ export function reportMarkdown(r: Report): string {
     `| Measure | Value |`,
     `|---|---|`,
     `| Score (2/1/0) | ${r.score.points}/${r.score.max} = ${pct(r.score.pct)} |`,
-    `| Noise between reps | ${r.noise.perRepPct.map((x) => pct(x)).join(' / ') || '—'} (sd ${pct(r.noise.stdev)}, range ${pct(r.noise.range)}) |`,
+    `| Score per rep (noise between reps) | ${r.noise.perRepPct.map((x) => pct(x)).join(' / ') || '—'} (sd ${pct(r.noise.stdev)}, range ${pct(r.noise.range)}) |`,
     `| Location recall@1 / @3 / MRR (policies read) | ${pct(r.location.recall1)} / ${pct(r.location.recall3)} / ${num(r.location.mrr)} (n=${r.location.n}) |`,
     `| Retrieval recall@5 / @10 (articles) | ${pct(r.retrieval.recall5)} / ${pct(r.retrieval.recall10)} (n=${r.retrieval.n}) |`,
     `| Verifiable quotes | ${r.quotes.verified}/${r.quotes.checked} = ${pct(r.quotes.rate)} |`,

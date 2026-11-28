@@ -15,6 +15,7 @@ import * as capabilities from './src/security/capabilities';
 import * as datasets from './src/datasets';
 import * as aiContexts from './src/ai-contexts';
 import * as pages from './src/pages';
+import * as knowledgeSources from './src/knowledge';
 import { BrightRuleSeedData } from './src/data/seed';
 import { policyHooks } from './src/qa';
 
@@ -104,4 +105,7 @@ export default defineStack({
   datasets: exportsOf(datasets),
   aiContexts: exportsOf(aiContexts),
   pages: exportsOf(pages),
+  // The policy-clause knowledge source (brightrule#77): indexed when the
+  // environment configures an embedder; search_knowledge serves it.
+  knowledgeSources: exportsOf(knowledgeSources),
 });

@@ -36,6 +36,7 @@ export const PolicyAdminPermissionSet = definePermissionSet({
   objects: {
     brightrule_policy: ALL,
     brightrule_policy_attachment: ALL,
+    brightrule_policy_clause: ALL,
     brightrule_policy_suggestion: ALL,
     // Read only: the 所属单位 picker lists the units (brightrule#52); the
     // units are maintained by the platform's administrators.

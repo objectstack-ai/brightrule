@@ -13,14 +13,22 @@ import { SUGGESTION_TRIAGE_FIELDS } from './suggestion-fields.js';
  * write. No capability, so the 「AI 诊断」 action is hidden from and refused to
  * an employee.
  *
- * Which policies an employee may read (published only, by issuing unit, …) is
- * row-level security still to come (#10, docs/visibility.md): until then this
- * set reads every policy.
+ * An employee reads published policies only (brightrule#70, docs/visibility.md
+ * 维度 1): the row-level rule below hides drafts, policies under revision and
+ * abolished ones from every read — the policy library, the reading page, and
+ * the AI, which reads as the asker. Their attachments go with them: the
+ * attachment object is controlled by its parent, so it shows only the
+ * attachments of policies the reader can read, with no rule of its own.
+ * Everyone holds this set, the platform's own admin included, and on a
+ * public_read object View All does not pass a row-level rule: 制度管理员
+ * reads them all through an allow-all rule of its own, which OR-combines with
+ * this one (policy-admin.permission.ts). Issuing-unit isolation and the other
+ * dimensions are still to come (#10).
  */
 export const InquirerPermissionSet = definePermissionSet({
   name: 'brightrule_inquirer',
   label: '问询人',
-  description: '员工默认权限：读制度和制度附件；提制度意见，只看自己的',
+  description: '员工默认权限：读已发布制度和它们的附件；提制度意见，只看自己的',
   isDefault: true,
   objects: {
     brightrule_policy: { allowRead: true },
@@ -40,4 +48,14 @@ export const InquirerPermissionSet = definePermissionSet({
     // 大类 is the intake hook's alone: it always derives it from 类别.
     'brightrule_policy_suggestion.category_group': { readable: true, editable: false },
   },
+  rowLevelSecurity: [
+    {
+      name: 'brightrule_inquirer_published_policies',
+      label: '只读已发布制度',
+      description: '员工只读已发布制度：草稿、修订中、已废止的制度及其附件都读不到（brightrule#70）',
+      object: 'brightrule_policy',
+      operation: 'select',
+      using: "status == 'published'",
+    },
+  ],
 });

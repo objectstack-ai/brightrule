@@ -72,6 +72,10 @@ export async function askQuestion(q: Question, s: AskSetup): Promise<AskResult> 
       turns.push(second);
     }
     const calls = turns.flatMap((t) => t.toolCalls);
+    const metered = turns.filter((t) => t.usage);
+    const usage = metered.length
+      ? { input_tokens: metered.reduce((n, t) => n + t.usage!.input, 0), output_tokens: metered.reduce((n, t) => n + t.usage!.output, 0) }
+      : {};
     const retrieval = retrievalFrom(calls, s.resolver);
     return {
       conversationId,
@@ -86,6 +90,7 @@ export async function askQuestion(q: Question, s: AskSetup): Promise<AskResult> 
         tool_calls: toToolCalls(calls, s.resolver),
         latency_ms: Date.now() - started,
         conversation_id: conversationId,
+        ...usage,
         ...(retrieval ? { retrieval } : {}),
       },
     };

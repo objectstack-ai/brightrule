@@ -236,6 +236,23 @@ export const Policy = ObjectSchema.create({
       group: 'content',
       description: '脱敏后的正文全文（Markdown）：条文以 **第X条** 开头，章节用 ## 标题。AI 按它作答，附件的全文在制度附件里',
     }),
+    // The text the knowledge source indexes (brightrule#77), stored on every
+    // write. The platform's markdown split cuts one passage per heading and
+    // embeds each passage with its heading path, but the body's articles start
+    // with a bold 「**第X条**」, not a heading, and a passage would not name its
+    // policy. So: a top heading 《所属单位：制度名称》文号, the body's own
+    // headings one level down under it (its title line and ## 第X章 chapters),
+    // and each 「**第X条**」 turned into a
+    // heading, so a passage is one article led by
+    // 「《甲公司：差旅费管理办法》文号 > 第三章 … > 第十条 …」.
+    search_text: Field.markdown({
+      hidden: true,
+      readonly: true,
+      label: '检索文本',
+      group: 'import',
+      expression: F`'# 《' + (record.owning_unit.?name.orValue('') == '' ? record.title : record.owning_unit.?name.orValue('') + '：' + record.title) + '》' + record.?doc_no.orValue('') + '\\n\\n' + ('\\n' + record.?body_md.orValue('')).split('\\n#').join('\\n##').split('**第').join('\\n###### 第').split('**').join('')`,
+      description: '知识库检索用的正文：标题行为《显示名称》文号，每条「第X条」转成小标题，自动生成；作答仍读 body_md',
+    }),
     has_images: Field.boolean({
       label: '含图片',
       defaultValue: false,

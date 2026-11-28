@@ -148,6 +148,14 @@ pnpm run eval:drive -- run --via mcp --base http://localhost:3000 --limit 10 --g
 - **不写数据**：写记录、执行动作、存草稿的工具一律答拒绝（`--execute-writes` 放行）。
 - **token**：直接取模型接口返回的 usage，只算评分的那几轮（不含多轮题的前置轮），不需要 `--tokens`。
 - 每轮最多调 20 次模型（`--max-steps`），到上限仍没有答复记为出错；工具结果给模型看前 6 万字。
+- **路线（`--route`，brightrule#77）**：`catalog` 不给模型看 `search_knowledge`，技能走查目录的兜底路线；`vector` 给模型看，技能先检索定位、再读整份制度。两条路线同一环境、同一题集各跑一遍即可对比。默认 `catalog`。配置名写成 `mcp/<模型>/<arm>/<路线>`。
+
+### 向量路线的环境准备
+
+1. 环境配好向量模型：Settings → AI & Embedder（或 `PUT /api/settings/ai`：`embedder_provider`、`embedder_api_key`、`embedder_model`），**重启**服务后生效。中文制度建议用支持中文的模型，如百炼 `dashscope` / `text-embedding-v4`。本地社区版的服务进程要能连到向量模型的接口（经代理时 Node 需要 `NODE_USE_ENV_PROXY=1`）。
+2. `setup` 装语料。服务在运行时，新写入的制度会实时进索引；启动时也会补建一次。
+3. 制度按单位隔离可见（brightrule#74）：`setup` 之后跑一次 `scripts/sharing/policy-unit-sharing.mjs`（见 `docs/visibility.md`），否则 persona 一份制度也看不到，检索和目录都是空的。
+
 - 配置名默认 `mcp/模型/arm`，同一份结果文件里可以和 ask 路线的记录并排出报告。
 
 ### 耗时和用量

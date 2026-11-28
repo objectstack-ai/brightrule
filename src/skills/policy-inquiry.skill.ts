@@ -24,6 +24,12 @@ import { defineSkill } from '@objectstack/spec';
  * the per-unit sharing rules land. No unit chain (an unassigned user, an MCP
  * client): no unit condition, as before.
  *
+ * Where the environment serves the policy-text knowledge source
+ * (src/knowledge, brightrule#77), a question that names no policy first asks
+ * `search_knowledge` which policies hold the answer, then reads the top 1–3
+ * WHOLE (retrieval locates, the model reads the policy); the catalog route
+ * stays as the fallback when the tool is absent, refused or finds nothing.
+ *
  * Phase one has no hand-off to a person (maintainer, 2026-11-24): with no
  * basis the answer says so; the escalation action stays for the form path.
  */
@@ -57,10 +63,12 @@ export const PolicyInquirySkill = defineSkill({
    - 只给了名称：query_records 对象 brightrule_policy，条件 title 包含名称中的关键词（如 { "title": { "$contains": "职业生涯规划" } }），找到后再读正文；找到多份同名或相近的，按 display_name 列出来（看得出各属哪家单位）请员工确认。
    - 这份制度回答不了时，先说明「本制度中未找到相关规定」，再说明你另外查了哪份制度，引用时写清是哪份。
    - 员工问「这个制度讲了什么 / 最新内容是什么」：读正文后按章概括要点，列出章节和主要条款号，不要只复述目录字段。
-2. **没有指定制度**：query_records 查制度目录，先缩小范围再挑，不要逐页读完整个目录。每次都带 status = "published"，limit 200，再加：
-   - 单位：系统提示的「主单位链」列出了单位 id 时，只查链上单位（本公司及上级）和没填所属单位的制度：{ "$or": [{ "owning_unit": { "$in": [链上全部 id] } }, { "owning_unit": { "$null": true } }] }。员工明确问另一家单位时，改为 display_name 包含那家单位的名称。没有单位链（未分配单位、系统提示里没有提问人）时不加单位条件。
-   - 关键词：用 $contains 在 title、summary、body_md 上筛，fields 不带 body_md。与单位条件同用时都放进 $and：{ "status": "published", "$and": [单位条件, { "$or": [关键词条件] }] }。
-   命中太多换更具体的关键词，没有命中换说法再查。选出与问题最相关的 1–3 份（按名称、分类、摘要判断；员工说法与制度用词不同时按意思判断，如「打车」对应交通、网约车，「带薪假」对应年休假，「升职、职级」对应职业生涯、专业职级），再逐份读正文。
+2. **没有指定制度**：
+   - 有 search_knowledge 时先用它定位：query 写一句检索语句，把员工说法换成制度用词（如「出差住宿每晚标准」），granularity: "record"，topK 8。每个命中是一份制度（title 是显示名称，record.id 是制度 id）及其最相关的一条。不相关就换说法再检一次。按下文单位规则从命中里选 1–3 份，直接用 get_record 读整份正文再作答，不再查目录，也不凭检索片段作答。
+   - 没有这个工具、工具报错或答 refused、两次都没有相关命中时，改查目录：query_records 查制度目录，先缩小范围再挑，不要逐页读完整个目录。每次都带 status = "published"，limit 200，再加：
+     - 单位：系统提示的「主单位链」列出了单位 id 时，只查链上单位（本公司及上级）和没填所属单位的制度：{ "$or": [{ "owning_unit": { "$in": [链上全部 id] } }, { "owning_unit": { "$null": true } }] }。员工明确问另一家单位时，改为 display_name 包含那家单位的名称。没有单位链（未分配单位、系统提示里没有提问人）时不加单位条件。
+     - 关键词：用 $contains 在 title、summary、body_md 上筛，fields 不带 body_md。与单位条件同用时都放进 $and：{ "status": "published", "$and": [单位条件, { "$or": [关键词条件] }] }。
+     命中太多换更具体的关键词，没有命中换说法再查。选出与问题最相关的 1–3 份（按名称、分类、摘要判断；员工说法与制度用词不同时按意思判断，如「打车」对应交通、网约车，「带薪假」对应年休假，「升职、职级」对应职业生涯、专业职级），再逐份读正文。
 3. 读正文时注意附则、例外条款，以及「按《某制度》执行」这类引用：引用的是另一份制度时，必要时按第 1 步的方法把它也读出来。
 
 ## 按提问人的所属单位作答
@@ -111,6 +119,6 @@ export const PolicyInquirySkill = defineSkill({
 - 请员工向归口部门咨询；不知道归口部门时，只说向本单位制度管理部门咨询，不要编部门名。
 - 不要用 create_record、update_record 等方式自己新建或修改任何记录。
 `,
-  tools: ['query_records', 'get_record'],
+  tools: ['search_knowledge', 'query_records', 'get_record'],
   active: true,
 });

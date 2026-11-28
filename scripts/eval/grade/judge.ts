@@ -102,3 +102,32 @@ export function openAiJudge(opts: { baseUrl: string; apiKey: string; model: stri
     return parseJudgeVerdict(j.choices[0]?.message?.content ?? '', input.question.answer_points.length);
   };
 }
+
+/**
+ * A judge run by the Claude Code CLI (`JUDGE_BACKEND=claude-cli`, `JUDGE_MODEL`
+ * an alias such as `sonnet`): one `claude -p` per answer, no tools, on the CLI
+ * account's own plan instead of an API key.
+ */
+export function claudeCliJudge(opts: { model: string }): Judge {
+  return async (input) => {
+    const { spawn } = await import('node:child_process');
+    const os = await import('node:os');
+    const text = await new Promise<string>((resolve, reject) => {
+      const child = spawn('claude', ['-p', buildJudgePrompt(input), '--model', opts.model, '--system-prompt', JUDGE_SYSTEM, '--tools', '', '--strict-mcp-config', '--setting-sources', '', '--disable-slash-commands', '--output-format', 'json'], { cwd: os.tmpdir(), stdio: ['ignore', 'pipe', 'pipe'] });
+      let out = '';
+      let err = '';
+      child.stdout.on('data', (d) => (out += d));
+      child.stderr.on('data', (d) => (err += d));
+      child.on('close', (code) => {
+        try {
+          const j = JSON.parse(out) as { result?: string; is_error?: boolean };
+          if (j.is_error || !j.result) reject(new Error(`judge claude: ${(j.result ?? err).slice(0, 200)}`));
+          else resolve(j.result);
+        } catch {
+          reject(new Error(`judge claude exited ${code}: ${(err || out).slice(0, 200)}`));
+        }
+      });
+    });
+    return parseJudgeVerdict(text, input.question.answer_points.length);
+  };
+}

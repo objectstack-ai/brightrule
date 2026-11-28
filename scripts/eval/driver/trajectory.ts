@@ -99,6 +99,12 @@ export function toToolCalls(calls: readonly TurnToolCall[], r: KeyResolver): Too
         read = byArg ? [byArg] : policyKeysIn(output, r).slice(0, 1);
       } else if (c.toolName === 'get_record_context') {
         read = policyKeysIn(output, r).slice(0, 1);
+      } else if (c.toolName === 'search_knowledge') {
+        // Each hit's snippet is a clause of its policy, read as it stands:
+        // the policies whose clauses came back are listed and read, in rank
+        // order (a clause id maps to its policy when the resolver knows it).
+        listed = policyKeysIn(output, r);
+        read = listed;
       } else if (c.toolName === 'query_records' && object === POLICY) {
         listed = policyKeysIn(output, r);
         read = rowsWithBody(output, r);

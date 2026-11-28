@@ -17,7 +17,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { corpusIndex } from './grade/corpus-index.js';
-import { openAiJudge, type Judge } from './grade/judge.js';
+import { claudeCliJudge, openAiJudge, type Judge } from './grade/judge.js';
 import { aggregate, reportMarkdown, type Graded } from './grade/metrics.js';
 import { finalScore, gradeRecord } from './grade/rules.js';
 import { Corpus, QuestionSet, RunRecord } from './schema.js';
@@ -39,7 +39,9 @@ const idx = corpusIndex(corpus);
 const qById = new Map(questions.questions.map((q) => [q.id, q]));
 const personaById = new Map(corpus.personas.map((p) => [p.id, p]));
 const judge: Judge | null =
-  process.env.JUDGE_BASE_URL && process.env.JUDGE_API_KEY && process.env.JUDGE_MODEL
+  process.env.JUDGE_BACKEND === 'claude-cli'
+    ? claudeCliJudge({ model: process.env.JUDGE_MODEL || 'sonnet' })
+    : process.env.JUDGE_BASE_URL && process.env.JUDGE_API_KEY && process.env.JUDGE_MODEL
     ? openAiJudge({ baseUrl: process.env.JUDGE_BASE_URL, apiKey: process.env.JUDGE_API_KEY, model: process.env.JUDGE_MODEL })
     : null;
 
@@ -62,7 +64,7 @@ for (const rec of records) {
 
 const configs = [...new Set(graded.map((g) => g.record.config))];
 const reports = configs.map((c) => aggregate(c, graded.filter((g) => g.record.config === c)));
-const md = [`Judge: ${judge ? process.env.JUDGE_MODEL : 'not run (rules only)'}.`, '', ...reports.map(reportMarkdown)].join('\n');
+const md = [`Judge: ${judge ? `${process.env.JUDGE_BACKEND === 'claude-cli' ? 'claude-cli/' : ''}${process.env.JUDGE_MODEL || 'sonnet'}` : 'not run (rules only)'}.`, '', ...reports.map(reportMarkdown)].join('\n');
 console.log(md);
 const out = flag('--out');
 if (out) fs.writeFileSync(out, `${JSON.stringify({ reports, graded: graded.map((g) => ({ ...g.rule, judge: g.judge, score: g.score })) }, null, 1)}\n`);

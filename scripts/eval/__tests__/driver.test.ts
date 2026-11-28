@@ -74,6 +74,14 @@ describe('the trajectory', () => {
     expect(unwrapOutput('not json')).toBe('not json');
   });
 
+  it('reads the policies whose clauses a search_knowledge call returned, through the clause → policy map', () => {
+    const withClauses = { ...resolver, byId: new Map([...resolver.byId, ['clause-1', 'FIN-001'], ['clause-2', 'HR-002']]) };
+    const hits = { hits: [{ snippet: '…', record: { object: 'brightrule_policy_clause', id: 'clause-2' } }, { record: { object: 'brightrule_policy_clause', id: 'clause-1' } }, { record: { object: 'brightrule_policy_clause', id: 'clause-x' } }] };
+    const calls = toToolCalls([{ toolName: 'search_knowledge', input: { query: '差旅' }, output: JSON.stringify(hits) }], withClauses);
+    expect(calls[0]!.read_policies).toEqual(['HR-002', 'FIN-001']);
+    expect(calls[0]!.listed_policies).toEqual(['HR-002', 'FIN-001']);
+  });
+
   it('finds policies by policy_no as well as by id', () => {
     expect(policyKeysIn([{ policy_no: 'FIN-001' }, { nested: { id: 'id-HR-002' } }, { policy_no: 'NOPE' }], resolver)).toEqual(['FIN-001', 'HR-002']);
   });

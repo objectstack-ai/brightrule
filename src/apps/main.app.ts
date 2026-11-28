@@ -24,13 +24,33 @@ import { POLICY_MAINTAIN_CAPABILITY } from '../security/capabilities.js';
 // relation queues (brightrule#45). 制度意见 is private (brightrule#57): an
 // employee's list holds only their own, an administrator's all of them. The
 // Notes sample is to be deleted (#10), so it has no entry. The first item is
-// where the app opens. 「制度维护」 requires the 制度维护 capability, which only
+// where the app opens: 问制度 is the platform's AI inquiry page (`ai:chat`,
+// @objectstack 19.0.0-next.2), a question box with suggested questions that
+// turns into the conversation in place; it replaced the html home page whose
+// 「开始提问」 only linked to /ai/ask. 「制度维护」 requires the 制度维护 capability, which only
 // 制度管理员 grants, so employees do not see it.
 const mainApp: UI.App = {
   name: 'brightrule_main_app',
   label: '明规',
   navigation: [
-    { id: 'brightrule_home_nav', type: 'page', pageName: 'brightrule_home', label: '问制度', icon: 'message-circle-question' },
+    {
+      id: 'brightrule_home_nav',
+      type: 'component',
+      componentRef: 'ai:chat',
+      label: '问制度',
+      icon: 'message-circle-question',
+      params: {
+        title: '有制度上的问题，直接问',
+        subtitle: 'AI 只依据你能看到的已发布制度作答，答复分「结论、依据、出处」，出处可以点开原文。看某一份制度时，点制度页的「问这份制度」。',
+        placeholder: '例如：出差住宿每晚最多能报多少？',
+        suggestions: [
+          '出差住宿每晚最多能报多少？',
+          '年休假怎么请，要谁批准？',
+          '采购金额多少以上要公开招标？',
+          '合同签订前要经过哪些审核？',
+        ],
+      },
+    },
     { id: 'brightrule_policy_library_nav', type: 'object', objectName: Policy.name, viewName: 'published', label: '制度库', icon: 'library' },
     {
       id: 'brightrule_maintain_group',

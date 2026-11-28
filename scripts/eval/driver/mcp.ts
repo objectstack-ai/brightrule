@@ -35,6 +35,8 @@ export interface McpOptions {
   /** `prompt`: the server's instructions plus the skill; `plain`: the instructions only. */
   arm: 'prompt' | 'plain';
   executeWrites?: boolean;
+  /** Tools the model is not shown (the catalog route hides `search_knowledge`, brightrule#77). */
+  hideTools?: string[];
 }
 
 interface McpTool {
@@ -140,7 +142,7 @@ export function mcpPersonaChat(s: Session, llm: LlmConfig, o: McpOptions): Perso
         if (!client.prompts.includes(SKILL_PROMPT)) throw new Error(`the server does not offer the prompt ${SKILL_PROMPT} (offered: ${client.prompts.join(', ') || 'none'})`);
         skill = await client.prompt(SKILL_PROMPT);
       }
-      const tools = client.tools.map((t) => ({ type: 'function', function: { name: t.name, description: t.description ?? '', parameters: t.inputSchema ?? { type: 'object', properties: {} } } }));
+      const tools = client.tools.filter((t) => !o.hideTools?.includes(t.name)).map((t) => ({ type: 'function', function: { name: t.name, description: t.description ?? '', parameters: t.inputSchema ?? { type: 'object', properties: {} } } }));
       return { client, skill, tools };
     })());
   let conversations = 0;

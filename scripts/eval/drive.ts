@@ -23,9 +23,10 @@
  *                           given, to map record ids to policies and to read token counts (--tokens)
  *
  * Questions and corpus default to scripts/eval/generated/ (run build.ts first).
- * `--route` labels the run: the environment decides which route the ask agent
- * takes (catalog today; vector and hybrid once the skill and the platform's
- * search land). Records are appended as each question finishes, so a run
+ * `--route` labels the run. On the ask route the environment decides which
+ * route the agent takes. On the MCP route it also picks the arm: `catalog`
+ * hides search_knowledge from the model, so the skill takes its catalog
+ * fallback; `vector` shows it (brightrule#77). Records are appended as each question finishes, so a run
  * stopped half way keeps what it has, and `--resume` asks only what is missing.
  */
 import { spawnSync } from 'node:child_process';
@@ -94,7 +95,7 @@ if (via === 'mcp') {
   llm = { baseUrl: LLM_BASE_URL.replace(/\/+$/, ''), apiKey: LLM_API_KEY, model: LLM_MODEL, maxSteps: Number(flag('--max-steps', '20')), toolOutputLimit: 60_000 };
 }
 const model = via === 'mcp' ? llm!.model : flag('--model');
-const config = flag('--config', via === 'mcp' ? `mcp/${model}/${arm}` : `${route}/${model ?? 'env-default'}`)!;
+const config = flag('--config', via === 'mcp' ? `mcp/${model}/${arm}/${route}` : `${route}/${model ?? 'env-default'}`)!;
 const app = flag('--app', 'ai.objectstack.brightrule')!;
 const out = path.resolve(flag('--out', path.join(HERE, 'results', `run-${new Date().toISOString().replace(/[:.]/g, '-')}.jsonl`))!);
 fs.mkdirSync(path.dirname(out), { recursive: true });
@@ -138,7 +139,12 @@ const chatOf = (personaId: string): PersonaChat => {
   if (!c) {
     const s = sessions.get(personaId)!;
     c = llm
-      ? mcpPersonaChat(s, llm, { arm: arm as 'prompt' | 'plain', executeWrites: has('--execute-writes') })
+      ? mcpPersonaChat(s, llm, {
+          arm: arm as 'prompt' | 'plain',
+          executeWrites: has('--execute-writes'),
+          // The catalog route is the skill's fallback: the model is not shown search_knowledge (brightrule#77).
+          hideTools: route === 'catalog' ? ['search_knowledge'] : [],
+        })
       : { newConversation: () => newConversation(s), turn: (conversationId, messages, context) => chatTurn(s, conversationId, messages, { context, model }) };
     chats.set(personaId, c);
   }

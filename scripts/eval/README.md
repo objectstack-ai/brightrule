@@ -75,7 +75,7 @@ pnpm run eval:build -- --seed 7 --out /tmp/eval-set
 
 驱动走员工用的 ask 对话路由：每题以对应 persona 的账号**登录**提问。平台只给登录会话注入「提问人」块（所属公司、单位链，cloud#5099），API key 和 MCP 都拿不到，所以不能用 API key 跑。
 
-需要一个装好 BrightRule、专门用来评测的环境（本地企业版栈或云上环境），和它的管理员账号。
+前提：一个已经在运行、装好 BrightRule、专门用来评测的环境（本地企业版栈或云上环境），和它的管理员账号（用环境变量 `EVAL_ADMIN_EMAIL` / `EVAL_ADMIN_PASSWORD` 传入，`setup` 必需，`run` 用它换算记录 id、读 token）。密码只从环境变量读，不写进文件。
 
 ```bash
 pnpm run eval:build -- --distractors 1500       # 先生成语料和题集

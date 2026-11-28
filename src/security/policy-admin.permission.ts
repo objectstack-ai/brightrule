@@ -20,6 +20,13 @@ const ALL = {
  * src/security/suggestion-fields.ts), and holds 制度诊断, the capability the
  * 「AI 诊断」 action requires. Assigned per person
  * (`sys_user_permission_set`); never a default.
+ *
+ * Its holders hold 问询人 too, whose row-level rule reads published policies
+ * only (brightrule#70). Read rules of the sets a user holds OR-combine, and
+ * View All does not pass them on a public_read object, so this set carries an
+ * allow-all rule on 制度: the policy office reads drafts, policies under
+ * revision and abolished ones, and edits them (an edit reaches the rows a
+ * read reaches). Attachments follow their policy.
  */
 export const PolicyAdminPermissionSet = definePermissionSet({
   name: 'brightrule_policy_admin',
@@ -41,4 +48,14 @@ export const PolicyAdminPermissionSet = definePermissionSet({
     SUGGESTION_TRIAGE_FIELDS.map((f) => [`brightrule_policy_suggestion.${f}`, { readable: true, editable: true }]),
   ),
   systemPermissions: [POLICY_DIAGNOSE_CAPABILITY, POLICY_MAINTAIN_CAPABILITY],
+  rowLevelSecurity: [
+    {
+      name: 'brightrule_policy_admin_all_policies',
+      label: '读全部制度',
+      description: '制度管理员读全部制度，含草稿、修订中、已废止；越过问询人的「只读已发布制度」（brightrule#70）',
+      object: 'brightrule_policy',
+      operation: 'select',
+      using: 'true',
+    },
+  ],
 });

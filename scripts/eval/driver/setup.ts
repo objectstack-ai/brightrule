@@ -15,6 +15,12 @@
  *   installed into a running environment does not get that binding until the
  *   next boot, and a persona without it reads no policy at all;
  * - an AI seat for each persona (environments without seats skip it);
+ * - the 制度管理员 permission set (`brightrule_policy_admin`) granted to the
+ *   administrator `setup` signs in as, before any policy is read: since
+ *   brightrule#70 only that set reads drafts and abolished policies, and an
+ *   administrator without it would not find them on a rerun, create them
+ *   again and fail on their links and attachments. `run` reads the same
+ *   account's view to map record ids to keys, so it needs the set too;
  * - policies (`brightrule_policy`, by `policy_no` = corpus key), then their
  *   上级制度 links, then attachments (by policy and `sort_no`).
  *
@@ -33,6 +39,8 @@ export interface SetupOptions {
   concurrency: number;
   /** The permission set granted to every persona (default `brightrule_inquirer`). */
   permissionSet?: string;
+  /** The permission set granted to the administrator, which reads every policy whatever its status (default `brightrule_policy_admin`). */
+  adminPermissionSet?: string;
   /** Load units and accounts only. */
   skipPolicies?: boolean;
   log: (line: string) => void;
@@ -227,8 +235,24 @@ async function loadPolicies(s: Session, corpus: Corpus, unitIds: Map<string, str
   return { created, updated, attachments: jobs.length };
 }
 
+/** Grant `set` to the signed-in account itself, unless it already holds it. Answers whether a grant was written. */
+export async function grantSelf(s: Session, set: string): Promise<boolean> {
+  const me = await call(s, 'GET', '/api/v1/auth/get-session');
+  const j = me.json as { user?: { id?: string }; data?: { user?: { id?: string } } } | null;
+  const userId = j?.user?.id ?? j?.data?.user?.id;
+  if (!me.ok || !userId) throw failure('read the administrator\'s own session', me);
+  const grants = await listAll(s, 'sys_user_permission_set', ['id', 'user_id', 'permission_set']);
+  if (grants.some((g) => str(g.user_id) === userId && g.permission_set === set)) return false;
+  const a = await call(s, 'POST', '/api/v1/data/sys_user_permission_set', { user_id: userId, permission_set: set });
+  if (!a.ok) throw failure(`grant ${set} to the administrator`, a);
+  return true;
+}
+
 export async function setupEnvironment(corpus: Corpus, o: SetupOptions): Promise<SetupResult> {
   const warnings: string[] = [];
+  const adminSet = o.adminPermissionSet ?? 'brightrule_policy_admin';
+  const granted = await grantSelf(o.admin, adminSet);
+  o.log(`administrator: ${adminSet} ${granted ? 'granted' : 'already held'}`);
   const unitIds = await upsertUnits(o.admin, corpus, o);
   await setupPersonas(o.admin, corpus, unitIds, o, warnings);
   const loaded = o.skipPolicies ? { created: 0, updated: 0, attachments: 0 } : await loadPolicies(o.admin, corpus, unitIds, o);

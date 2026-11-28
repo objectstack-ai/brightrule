@@ -4,7 +4,7 @@ import { askQuestion, type PersonaChat } from '../driver/ask.js';
 import { parseUiMessageStream, type ChatMessage, type Turn } from '../driver/chat.js';
 import { rowsOf } from '../driver/http.js';
 import { mcpPersonaChat, parseRpcBody, SKILL_PROMPT, systemPrompt } from '../driver/mcp.js';
-import { parentsFirst, policyRow } from '../driver/setup.js';
+import { grantSelf, parentsFirst, policyRow, setupEnvironment } from '../driver/setup.js';
 import { policyKeysIn, retrievalFrom, toToolCalls, unwrapOutput } from '../driver/trajectory.js';
 import { buildQuestionSet } from '../questions/index.js';
 import { RunRecord } from '../schema.js';
@@ -266,6 +266,104 @@ describe('the MCP route', () => {
       const q = Q('zh-direct-01');
       const { record } = await askQuestion(q, setup(q.persona, mcpPersonaChat(session, { ...llm, maxSteps: 2 }, { arm: 'plain' })));
       expect(record.error).toMatch(/within 2 model calls/);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+// ── setup against a published-only environment (brightrule#70) ──────────────
+
+describe('setup on an environment where only the policy administrator reads unpublished policies', () => {
+  /**
+   * A small fake of the data API and auth: tables in memory, and the #70 rule
+   * — a list of brightrule_policy shows drafts and abolished rows only to an
+   * account holding brightrule_policy_admin.
+   */
+  function fakeEnvironment() {
+    const tables: Record<string, Record<string, unknown>[]> = {
+      sys_business_unit: [], sys_user: [{ id: 'admin-1', email: 'admin@example.test' }], sys_business_unit_member: [],
+      sys_user_permission_set: [], brightrule_policy: [], brightrule_policy_attachment: [],
+    };
+    let n = 0;
+    const log: string[] = [];
+    const adminSees = () => tables.sys_user_permission_set!.some((g) => g.user_id === 'admin-1' && g.permission_set === 'brightrule_policy_admin');
+    const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'set-cookie': 's=1; Path=/' } });
+    const fetchMock = vi.fn(async (url: string, init: { method?: string; body?: string } = {}) => {
+      const u = new URL(url);
+      const method = init.method ?? 'GET';
+      const body = init.body ? JSON.parse(init.body) : undefined;
+      const p = u.pathname;
+      if (p === '/api/v1/auth/get-session') return json({ user: { id: 'admin-1' } });
+      if (p === '/api/v1/auth/sign-in/email' || p === '/api/v1/auth/change-password') return json({ ok: true });
+      if (p === '/api/v1/auth/admin/create-user') {
+        const id = `u${++n}`;
+        tables.sys_user!.push({ id, email: body.email });
+        return json({ user: { id } });
+      }
+      if (p.startsWith('/api/v1/actions/')) return json({ ok: true });
+      const m = p.match(/^\/api\/v1\/data\/([a-z_]+)(?:\/([^/]+))?$/);
+      if (!m) return json({ error: `no route ${p}` }, 404);
+      const [, object, id] = m;
+      const rows = tables[object!]!;
+      log.push(`${method} ${object}`);
+      if (method === 'GET') {
+        let visible = rows;
+        if (object === 'brightrule_policy' && !adminSees()) visible = rows.filter((r) => r.status === 'published');
+        const skip = Number(u.searchParams.get('skip') ?? 0);
+        const limit = Number(u.searchParams.get('limit') ?? 200);
+        return json({ records: visible.slice(skip, skip + limit) });
+      }
+      if (method === 'POST') {
+        const row = { id: `r${++n}`, ...body };
+        rows.push(row);
+        return json({ id: row.id, record: row });
+      }
+      const row = rows.find((r) => r.id === id);
+      if (!row) return json({ error: 'not found' }, 404);
+      if (object === 'brightrule_policy' && row.status !== 'published' && !adminSees()) return json({ error: 'not found' }, 404);
+      if (method === 'PATCH') Object.assign(row, body);
+      if (method === 'DELETE') rows.splice(rows.indexOf(row), 1);
+      return json({ id });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    return { tables, log };
+  }
+
+  const small = {
+    ...corpus,
+    units: corpus.units.filter((u) => u.code === 'DEMO-GROUP' || u.code === 'DEMO-A'),
+    personas: corpus.personas.filter((p) => p.id === 'p-a-staff'),
+    policies: corpus.policies.filter((p) => ['FIN-001', 'FIN-001-2023', 'A-FIN-010'].includes(p.key)),
+  };
+  const opts = (log: string[] = []) => ({ baseUrl: 'http://env.test', admin: { baseUrl: 'http://env.test', cookie: 's=1' }, password: 'pw', concurrency: 2, log: (l: string) => log.push(l) });
+
+  it('grants the administrator brightrule_policy_admin before reading any policy, so a rerun finds the abolished one and creates nothing', async () => {
+    const env = fakeEnvironment();
+    try {
+      expect(small.policies.some((p) => p.status !== 'published')).toBe(true);
+      const first = await setupEnvironment(small, opts());
+      expect(first.policies).toEqual({ created: 3, updated: 0 });
+      const grantAt = env.log.indexOf('POST sys_user_permission_set');
+      expect(grantAt).toBeGreaterThanOrEqual(0);
+      expect(grantAt).toBeLessThan(env.log.indexOf('GET brightrule_policy'));
+      expect(env.tables.sys_user_permission_set!.filter((g) => g.user_id === 'admin-1')).toEqual([expect.objectContaining({ permission_set: 'brightrule_policy_admin' })]);
+
+      const second = await setupEnvironment(small, opts());
+      expect(second.policies).toEqual({ created: 0, updated: 3 });
+      expect(env.tables.brightrule_policy).toHaveLength(3);
+      expect(env.tables.sys_user_permission_set!.filter((g) => g.user_id === 'admin-1')).toHaveLength(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('grantSelf writes nothing when the account already holds the set', async () => {
+    const env = fakeEnvironment();
+    try {
+      expect(await grantSelf({ baseUrl: 'http://env.test', cookie: 's=1' }, 'brightrule_policy_admin')).toBe(true);
+      expect(await grantSelf({ baseUrl: 'http://env.test', cookie: 's=1' }, 'brightrule_policy_admin')).toBe(false);
+      expect(env.tables.sys_user_permission_set).toHaveLength(1);
     } finally {
       vi.unstubAllGlobals();
     }

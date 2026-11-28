@@ -4,7 +4,7 @@
  * environment, then ask the questions as their persona accounts and write run
  * records for grade.ts.
  *
- *   npx tsx scripts/eval/drive.ts setup --base URL [--corpus FILE] [--concurrency 8] [--permission-set NAME] [--skip-policies]
+ *   npx tsx scripts/eval/drive.ts setup --base URL [--corpus FILE] [--concurrency 8] [--permission-set NAME] [--admin-permission-set NAME] [--skip-policies]
  *   npx tsx scripts/eval/drive.ts run   --base URL [--questions FILE] [--corpus FILE]
  *        [--only ID,ID] [--type TYPE,TYPE] [--limit N] [--reps 3] [--concurrency 4]
  *        [--route catalog|vector|hybrid] [--model ID] [--config NAME] [--app PACKAGE]
@@ -65,7 +65,7 @@ const concurrency = Number(flag('--concurrency', command === 'setup' ? '8' : '4'
 if (command === 'setup') {
   if (!admin) throw new Error('setup needs an administrator: set EVAL_ADMIN_EMAIL and EVAL_ADMIN_PASSWORD');
   const t0 = Date.now();
-  const r = await setupEnvironment(corpus, { baseUrl: base, admin, password: personaPassword, concurrency, permissionSet: flag('--permission-set'), skipPolicies: has('--skip-policies'), log });
+  const r = await setupEnvironment(corpus, { baseUrl: base, admin, password: personaPassword, concurrency, permissionSet: flag('--permission-set'), adminPermissionSet: flag('--admin-permission-set'), skipPolicies: has('--skip-policies'), log });
   log(`setup done in ${Math.round((Date.now() - t0) / 1000)} s: ${JSON.stringify({ ...r, warnings: r.warnings.length })}`);
   for (const w of r.warnings) log(`warning: ${w}`);
   process.exit(0);

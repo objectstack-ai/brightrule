@@ -3,6 +3,7 @@ import { bootStack, type VerifyStack } from '@objectstack/verify';
 import config from '../../../objectstack.config';
 import { POLICY_DIAGNOSE_CAPABILITY } from '../capabilities.js';
 import { DIAGNOSE_PENDING_MESSAGE } from '../../actions/diagnose-policy.action.js';
+import { reconcilePolicyUnitRules } from '../../../scripts/sharing/policy-unit-sharing.mjs';
 
 type Row = Record<string, unknown>;
 
@@ -31,6 +32,15 @@ describe('制度管理员 and 问询人 on the engine', () => {
     });
     expect(grant.status).toBe(201);
     [policy] = (await stack.rows('brightrule_policy', { title: '差旅费报销管理办法' })) as Row[];
+    // Policies are private and shared by owning unit (brightrule#74): the
+    // employee works in the group, whose policies the unit rules open to them.
+    const [group] = (await stack.rows('sys_business_unit', { code: 'DEMO-GROUP' })) as Row[];
+    const member = await stack.apiAs(devAdmin, 'POST', '/data/sys_business_unit_member', {
+      business_unit_id: group.id,
+      user_id: (await stack.contextFor(employee)).userId,
+    });
+    expect(member.status).toBe(201);
+    await reconcilePolicyUnitRules((method, path, body) => stack.apiAs(devAdmin, method, path, body));
   });
 
   afterAll(async () => {

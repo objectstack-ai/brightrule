@@ -16,14 +16,18 @@ import { SUGGESTION_TRIAGE_FIELDS } from './suggestion-fields.js';
  * An employee reads published policies only (brightrule#70, docs/visibility.md
  * 维度 1): the row-level rule below hides drafts, policies under revision and
  * abolished ones from every read — the policy library, the reading page, and
- * the AI, which reads as the asker. Their attachments go with them: the
- * attachment object is controlled by its parent, so it shows only the
- * attachments of policies the reader can read, with no rule of its own.
- * Everyone holds this set, the platform's own admin included, and on a
- * public_read object View All does not pass a row-level rule: 制度管理员
- * reads them all through an allow-all rule of its own, which OR-combines with
- * this one (policy-admin.permission.ts). Issuing-unit isolation and the other
- * dimensions are still to come (#10).
+ * the AI, which reads as the asker. 制度管理员 reads them all through an
+ * allow-all rule of its own, which OR-combines with this one
+ * (policy-admin.permission.ts).
+ *
+ * WHICH units' policies an employee reads is decided by sharing, not here
+ * (docs/visibility.md principle 3). The policy object is private, and a
+ * per-unit sharing rule opens a unit's policies to the unit and every unit
+ * under it (brightrule#74, dimension 2; the rules are written by
+ * scripts/sharing/policy-unit-sharing.mjs). So an employee reads the policies
+ * of their own unit and of every unit above it, and none of a sibling's; an
+ * employee in no unit reads none. Attachments follow their policy
+ * (controlled_by_parent), with no rule of their own.
  */
 export const InquirerPermissionSet = definePermissionSet({
   name: 'brightrule_inquirer',

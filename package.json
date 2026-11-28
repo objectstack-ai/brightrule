@@ -31,6 +31,7 @@
   },
   "devDependencies": {
     "@objectstack/cli": "19.0.0-next.2",
+    "@objectstack/mcp": "19.0.0-next.2",
     "@objectstack/skills": "19.0.0-next.2",
     "@objectstack/verify": "19.0.0-next.2",
     "@types/node": "^22.20.5",

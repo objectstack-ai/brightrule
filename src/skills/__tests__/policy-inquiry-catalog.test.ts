@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { bootStack, type VerifyStack } from '@objectstack/verify';
 import config from '../../../objectstack.config';
 import { PolicyInquirySkill } from '../policy-inquiry.skill.js';
+import { reconcilePolicyUnitRules } from '../../../scripts/sharing/policy-unit-sharing.mjs';
 
 type Row = Record<string, unknown>;
 
@@ -54,8 +55,11 @@ describe('the policy-inquiry skill, on citing a policy', () => {
 
 // The filter the skill teaches, run on the REAL engine (booted from source,
 // in-memory database, the sample seed) as an employee: the shape compiles, and
-// a 示例甲公司 employee's catalog holds the group's and 甲's policies and the
-// ones with no owning unit, never 示例乙公司's.
+// a 示例甲公司 employee's catalog holds the group's and 甲's policies, never
+// 示例乙公司's. Policies are private and shared by owning unit (brightrule#74),
+// so the employee is placed in 甲 and the unit rules are reconciled; a policy
+// with no owning unit is shared with nobody, so the skill's `$null` branch
+// finds nothing for an employee (it still does for 制度管理员).
 describe("the skill's unit-chain filter on the engine", () => {
   let stack: VerifyStack;
   let employee: string;
@@ -74,6 +78,12 @@ describe("the skill's unit-chain filter on the engine", () => {
       { as: admin },
     );
     employee = await stack.signUp('catalog-reader@example.com');
+    const member = await stack.apiAs(admin, 'POST', '/data/sys_business_unit_member', {
+      business_unit_id: id('DEMO-A'),
+      user_id: (await stack.contextFor(employee)).userId,
+    });
+    expect(member.status).toBe(201);
+    await reconcilePolicyUnitRules((method, path, body) => stack.apiAs(admin, method, path, body));
   });
 
   afterAll(async () => {
@@ -92,8 +102,8 @@ describe("the skill's unit-chain filter on the engine", () => {
     return rows.map((r) => String(r.title)).sort();
   };
 
-  it("finds the group's policy, the asker's company's own, and one with no owning unit", async () => {
-    expect(await catalog('合同')).toEqual(['关于转发《合同管理办法》的通知', '合同管理办法', '示例无单位合同用印细则'].sort());
+  it("finds the group's policy and the asker's company's own; one with no owning unit is shared with nobody", async () => {
+    expect(await catalog('合同')).toEqual(['关于转发《合同管理办法》的通知', '合同管理办法'].sort());
   });
 
   it('leaves out a sibling company\'s policy on the same matter', async () => {

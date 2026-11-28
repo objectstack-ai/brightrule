@@ -44,10 +44,15 @@ import { F } from '@objectstack/spec';
  */
 export const Policy = ObjectSchema.create({
   name: 'brightrule_policy',
-  // Reference data: every member reads a policy, its owner maintains it.
-  // Issuing-unit visibility (group-wide vs one subsidiary) is a sharing-rule
-  // layer on top of this, per docs/visibility.md — not built yet.
-  sharingModel: 'public_read',
+  // Private: an employee reads only the policies a sharing rule opens to them
+  // (brightrule#74, docs/visibility.md dimension 2). A policy of unit X is
+  // shared with X and every unit under it by the rule
+  // `brightrule_policy_unit_<X's id>`, one rule per owning unit, which
+  // scripts/sharing/policy-unit-sharing.mjs creates and removes (the unit ids
+  // differ per environment, so these rules cannot be declared here). A unit
+  // with no rule yet means its policies are hidden, never leaked. 制度管理员
+  // reads every policy past sharing (viewAllRecords).
+  sharingModel: 'private',
   label: '制度',
   pluralLabel: '制度',
   icon: 'book-open',

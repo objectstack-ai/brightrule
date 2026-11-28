@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { bootStack, type VerifyStack } from '@objectstack/verify';
 import config from '../../../objectstack.config';
+import { reconcilePolicyUnitRules } from '../../../scripts/sharing/policy-unit-sharing.mjs';
 
 type Row = Record<string, unknown>;
 
@@ -19,6 +20,7 @@ describe('问询人 reads published policies only', () => {
   let devAdmin: string;
   let employee: string;
   let officer: string;
+  let groupId: string;
   const policies = {} as Record<Status, Row>;
   const attachments = {} as Record<Status, Row>;
 
@@ -32,12 +34,25 @@ describe('问询人 reads published policies only', () => {
       permission_set: 'brightrule_policy_admin',
     });
     expect(grant.status).toBe(201);
+    // Policies are private and shared by owning unit (brightrule#74): the test
+    // policies belong to the group, the employee works there, and the unit
+    // rules are reconciled once the policies exist.
+    const [group] = (await stack.rows('sys_business_unit', { code: 'DEMO-GROUP' })) as Row[];
+    groupId = String(group.id);
+    const member = await stack.apiAs(devAdmin, 'POST', '/data/sys_business_unit_member', {
+      business_unit_id: group.id,
+      user_id: (await stack.contextFor(employee)).userId,
+    });
+    expect(member.status).toBe(201);
     for (const status of STATUSES) {
-      [policies[status]] = (await stack.seed(POLICY, [{ title: `可见性测试制度（${status}）`, status }])) as Row[];
+      [policies[status]] = (await stack.seed(POLICY, [
+        { title: `可见性测试制度（${status}）`, status, owning_unit: groupId },
+      ])) as Row[];
       [attachments[status]] = (await stack.seed(ATTACHMENT, [
         { title: `可见性测试附件（${status}）`, label: '附件1', sort_no: 1, policy: policies[status].id },
       ])) as Row[];
     }
+    await reconcilePolicyUnitRules((method, path, body) => stack.apiAs(devAdmin, method, path, body));
   });
 
   afterAll(async () => {
@@ -86,7 +101,7 @@ describe('问询人 reads published policies only', () => {
   });
 
   it('hides a policy again when it leaves 已发布, and shows it when it is published', async () => {
-    const [p] = (await stack.seed(POLICY, [{ title: '可见性测试制度（状态变化）', status: 'published' }])) as Row[];
+    const [p] = (await stack.seed(POLICY, [{ title: '可见性测试制度（状态变化）', status: 'published', owning_unit: groupId }])) as Row[];
     const seen = async () => ((await stack.rows(POLICY, { id: p.id }, { as: employee })) as Row[]).length;
     expect(await seen()).toBe(1);
     await stack.hooks.run(POLICY, 'update', { id: p.id, status: 'abolished' }, { as: officer });

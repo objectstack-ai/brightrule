@@ -56,7 +56,7 @@
 2. 字段协议只禁止查找指向元数据存储表（`sys_metadata`、`sys_metadata_history`，见 `@objectstack/spec` 的 `field.zod.ts` 关于 `reference` 的说明），其余 `sys_*` 对象可以引用；`pnpm validate` 通过，真实引擎上按名称解析种子、选择业务单元都正常（第 7 节）。
 3. 多公司隔离要用的共享规则（接收方「本单位及下级单位」`unit_and_subordinates`）认的是业务单元树。文本对不上树，迟早还要再改一次。
 
-**与平台的 `owning_business_unit_id` 不是一回事**：平台在每个可归属对象上注入了一个同样指向业务单元的系统列 `owning_business_unit_id`（ADR-0117），但它是服务端盖章的归属锚点，只读、隐藏，盖章逻辑尚未上线，现在没有任何东西写它，应用也写不进去。所属单位是制度文件自己的业务属性（文件放在哪家单位的目录里），由导入和管理员填写。多公司隔离那张卡要定：共享规则按 `owning_unit` 写，还是等平台盖章上线后把 `owning_unit` 同步到 `owning_business_unit_id`。
+**与平台的 `owning_business_unit_id` 不是一回事**：平台在每个可归属对象上注入了一个同样指向业务单元的系统列 `owning_business_unit_id`（ADR-0117），但它是服务端盖章的归属锚点，只读、隐藏，盖章逻辑尚未上线，现在没有任何东西写它，应用也写不进去。所属单位是制度文件自己的业务属性（文件放在哪家单位的目录里），由导入和管理员填写。多公司隔离那张卡要定：共享规则按 `owning_unit` 写，还是等平台盖章上线后把 `owning_unit` 同步到 `owning_business_unit_id`。（#74 已定：按 `owning_unit` 写，见 [`visibility.md`](visibility.md) 第 8 节。）
 
 **集团机关发的制度**属于集团这一级的业务单元（种子里是树根「示例集团」），这样按「本单位及下级单位」共享时，集团制度覆盖全集团，下属公司的制度只覆盖本公司及其下级，正对应 [`visibility.md`](visibility.md) 维度 2 的规则。若客户的业务单元树里「集团机关」是与下属公司并列的一个节点，集团制度应挂在它们共同的上级上，由多公司隔离那张卡定。
 

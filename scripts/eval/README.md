@@ -148,6 +148,22 @@ pnpm run eval:drive -- run --via mcp --base http://localhost:3000 --limit 10 --g
 - **不写数据**：写记录、执行动作、存草稿的工具一律答拒绝（`--execute-writes` 放行）。
 - **token**：直接取模型接口返回的 usage，只算评分的那几轮（不含多轮题的前置轮），不需要 `--tokens`。
 - 每轮最多调 20 次模型（`--max-steps`），到上限仍没有答复记为出错；工具结果给模型看前 6 万字。
+
+#### 用 Claude Code CLI 作答和盲评（`--llm claude-cli`）
+
+没有兼容 OpenAI 的 API key、想用 Claude 套餐自身的额度时，作答和盲评都可以交给本机的 `claude` CLI：
+
+```bash
+export LLM_MODEL=haiku                     # claude --model 的别名或模型 id，默认 haiku
+pnpm run eval:drive -- run --via mcp --llm claude-cli --base http://localhost:3000 --limit 10
+JUDGE_BACKEND=claude-cli JUDGE_MODEL=sonnet npx tsx scripts/eval/grade.ts results/run-….jsonl
+```
+
+- 每轮一次 `claude -p`：系统提示与上面相同（服务器说明 + 技能 + 钉住的制度），内置工具全部关掉，只给部署的 MCP 工具。MCP 经 `driver/mcp-stdio-proxy.mjs` 转发：以 persona 登录、记下每次工具调用（轨迹）、写操作一律拒绝、超过 `--max-steps` 次调用后答错误；多轮题的后续轮续接同一 CLI 会话。
+- token 取 CLI 报的 usage（输入含缓存读写）；跑完打印 CLI 报的标价成本，实际计入 CLI 账号的套餐。
+- 盲评每题一次 `claude -p`，无工具，提示词同 `grade/judge.ts`。
+
+向量路线（`search_knowledge`）：驱动启动时用管理员读出全部 `brightrule_policy_clause` 的（id, 所属制度），命中的条款记为读过其所属制度，检索召回也按此换算；读不到条款表时命中不计。
 - 配置名默认 `mcp/模型/arm`，同一份结果文件里可以和 ask 路线的记录并排出报告。
 
 ### 耗时和用量

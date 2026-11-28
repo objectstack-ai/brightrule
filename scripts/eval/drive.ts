@@ -35,6 +35,7 @@ import { fileURLToPath } from 'node:url';
 import { askQuestion, type PersonaChat } from './driver/ask.js';
 import { chatTurn, newConversation } from './driver/chat.js';
 import { mcpPersonaChat, type LlmConfig } from './driver/mcp.js';
+import { claudeCliPersonaChat, cliCost, type ClaudeCliConfig } from './driver/mcp-claude-cli.js';
 import { listAll, pool, signIn, type Session } from './driver/http.js';
 import { policyIds, setupEnvironment } from './driver/setup.js';
 import { Corpus, QuestionSet, RunRecord, type Question } from './schema.js';
@@ -88,12 +89,18 @@ if (!['catalog', 'vector', 'hybrid'].includes(route)) throw new Error(`--route i
 const arm = flag('--arm', 'prompt')!;
 if (arm !== 'prompt' && arm !== 'plain') throw new Error(`--arm is prompt or plain, not ${arm}`);
 let llm: LlmConfig | undefined;
-if (via === 'mcp') {
+const llmBackend = flag('--llm', 'openai')!;
+if (llmBackend !== 'openai' && llmBackend !== 'claude-cli') throw new Error(`--llm is openai or claude-cli, not ${llmBackend}`);
+const cli: ClaudeCliConfig | undefined =
+  via === 'mcp' && llmBackend === 'claude-cli'
+    ? { model: process.env.LLM_MODEL || 'haiku', maxCalls: Number(flag('--max-steps', '20')), toolOutputLimit: 60_000, timeoutMs: 10 * 60_000 }
+    : undefined;
+if (via === 'mcp' && !cli) {
   const { LLM_BASE_URL, LLM_API_KEY, LLM_MODEL } = process.env;
   if (!LLM_BASE_URL || !LLM_API_KEY || !LLM_MODEL) throw new Error('--via mcp needs LLM_BASE_URL, LLM_API_KEY and LLM_MODEL (any OpenAI-compatible chat API)');
   llm = { baseUrl: LLM_BASE_URL.replace(/\/+$/, ''), apiKey: LLM_API_KEY, model: LLM_MODEL, maxSteps: Number(flag('--max-steps', '20')), toolOutputLimit: 60_000 };
 }
-const model = via === 'mcp' ? llm!.model : flag('--model');
+const model = cli ? `claude-cli/${cli.model}` : via === 'mcp' ? llm!.model : flag('--model');
 const config = flag('--config', via === 'mcp' ? `mcp/${model}/${arm}` : `${route}/${model ?? 'env-default'}`)!;
 const app = flag('--app', 'ai.objectstack.brightrule')!;
 const out = path.resolve(flag('--out', path.join(HERE, 'results', `run-${new Date().toISOString().replace(/[:.]/g, '-')}.jsonl`))!);
@@ -120,6 +127,19 @@ for (const s of admin ? [admin] : [...sessions.values()]) {
 }
 const missing = corpus.policies.filter((p) => !idOfKey.has(p.key)).length;
 log(`${idOfKey.size} corpus policies found on the environment${missing ? `, ${missing} missing (run setup, or they are hidden from the accounts)` : ''}`);
+// Clause ids → their policy's key: a `search_knowledge` hit names the clause
+// (`brightrule_policy_clause`), and its snippet is that policy's text.
+if (admin) {
+  const clauses = await listAll(admin, 'brightrule_policy_clause', ['id', 'policy'], 1000).catch((e: Error) => {
+    log(`reading clauses failed (${e.message}); search_knowledge hits stay unmapped`);
+    return [];
+  });
+  for (const c of clauses) {
+    const key = byId.get(String((c.policy as { id?: string } | null)?.id ?? c.policy));
+    if (key) byId.set(String(c.id), key);
+  }
+  if (clauses.length) log(`${clauses.length} clauses mapped to their policies`);
+}
 const resolver = { byId, keys: new Set(corpus.policies.map((p) => p.key)) };
 
 const done = new Set<string>();
@@ -137,7 +157,9 @@ const chatOf = (personaId: string): PersonaChat => {
   let c = chats.get(personaId);
   if (!c) {
     const s = sessions.get(personaId)!;
-    c = llm
+    c = cli
+      ? claudeCliPersonaChat(s, cli, { arm: arm as 'prompt' | 'plain', executeWrites: has('--execute-writes') })
+      : llm
       ? mcpPersonaChat(s, llm, { arm: arm as 'prompt' | 'plain', executeWrites: has('--execute-writes') })
       : { newConversation: () => newConversation(s), turn: (conversationId, messages, context) => chatTurn(s, conversationId, messages, { context, model }) };
     chats.set(personaId, c);
@@ -168,6 +190,7 @@ await pool(jobs, concurrency, async ({ q, rep }) => {
   log(`[${finished}/${jobs.length}] ${q.id} r${rep} ${record.error ? `ERROR ${record.error.slice(0, 120)}` : `${Math.round(record.latency_ms / 1000)} s, ${record.tool_calls.length} tools, read ${reads.join(' ') || '-'}${record.clarified ? ', asked back' : ''}`}`);
 });
 log(`asked in ${Math.round((Date.now() - t0) / 1000)} s → ${out}`);
+if (cli) log(`claude-cli: ${cliCost.turns} turns, list-price cost $${cliCost.usd.toFixed(3)} (charged to the CLI account's plan)`);
 
 if (has('--tokens') && via === 'mcp') log('--tokens: the MCP route records the model\'s own usage already; nothing to read');
 else if (has('--tokens')) {
